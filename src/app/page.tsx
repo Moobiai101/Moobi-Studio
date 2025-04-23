@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Camera, Video, ImagePlus, Headphones, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
+import { createClient } from '@/lib/supabase/client';
 
 const features = [
   {
@@ -51,6 +52,37 @@ const features = [
 ];
 
 export default function Home() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const supabase = createClient();
+
+  // Check authentication status
+  useEffect(() => {
+    const checkAuth = async () => {
+      setIsCheckingAuth(true);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setIsLoggedIn(!!session);
+      } catch (error) {
+        console.error('Error checking auth status:', error);
+        setIsLoggedIn(false);
+      } finally {
+        setIsCheckingAuth(false);
+      }
+    };
+
+    checkAuth();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsLoggedIn(!!session);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [supabase]);
+
   useEffect(() => {
     const observer = new IntersectionObserver(
       (entries) => {
@@ -101,11 +133,11 @@ export default function Home() {
       {/* Features section - simplified to ensure visibility */}
       <section id="features" className="mb-16 opacity-100">
         <div className="section-reveal">
-          <h2 className="text-2xl font-bold mb-8 text-center">Creative Studios</h2>
+        <h2 className="text-2xl font-bold mb-8 text-center">Creative Studios</h2>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
-            {features.map((feature) => (
+          {features.map((feature) => (
               <Link key={feature.title} href={feature.comingSoon ? '#' : feature.href} className={cn("block group", feature.comingSoon && "cursor-not-allowed opacity-70")}>
-                <Card 
+            <Card 
                   className="relative h-full p-4 md:p-6 backdrop-blur-sm bg-card/60 border hover:border-sidebar-primary/40 hover:bg-card/80 transition-all hover:-translate-y-1 flex flex-col items-center justify-center text-center"
                 >
                   {/* Conditional Coming Soon Badge */}
@@ -115,12 +147,12 @@ export default function Home() {
                     </div>
                   )}
                   <div className={`${feature.bgColor} ${feature.borderColor} w-12 h-12 rounded-lg flex items-center justify-center border mb-3 group-hover:scale-110 transition-transform`}>
-                    <feature.icon className={`h-6 w-6 ${feature.color}`} />
-                  </div>
+                  <feature.icon className={`h-6 w-6 ${feature.color}`} />
+                </div>
                   <CardTitle className="text-base md:text-lg mt-2 group-hover:text-sidebar-primary transition-colors">{feature.title}</CardTitle>
                 </Card>
-              </Link>
-            ))}
+                  </Link>
+          ))}
           </div>
         </div>
       </section>
@@ -197,54 +229,79 @@ export default function Home() {
             ];
 
             return (
-              // Masonry Layout (similar to Image Studio)
-              <div className="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
-                {galleryItems.map((item) => (
-                  <div key={item.id} className="overflow-hidden rounded-lg border bg-card/60 shadow-sm break-inside-avoid group relative">
-                    {item.type === 'image' ? (
-                      // Removed explicit aspect ratio class from container
-                      <div className="bg-muted"> 
-                        <img 
-                          src={item.src} 
-                          alt={item.alt}
-                          loading="lazy"
-                          className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
-                        />
+              <div className="relative">
+                {/* Masonry Layout (similar to Image Studio) */}
+                <div className="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
+                  {galleryItems.map((item) => (
+                    <div key={item.id} className="overflow-hidden rounded-lg border bg-card/60 shadow-sm break-inside-avoid group relative">
+                      {item.type === 'image' ? (
+                        // Removed explicit aspect ratio class from container
+                        <div className="bg-muted"> 
+                          <img 
+                            src={item.src} 
+                            alt={item.alt}
+                            loading="lazy"
+                            className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
+                          />
+                        </div>
+                      ) : (
+                        // Video element added
+                        <div className="bg-muted"> 
+                          <video
+                            src={item.src}
+                            autoPlay
+                            loop
+                            muted
+                            playsInline // Important for mobile playback
+                            className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
+                          />
+                        </div>
+                      )}
+                      {/* Hover Overlay with Prompt and Conditional Button */}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-3 flex flex-col justify-between">
+                        {/* Top section for button */}
+                        <div>
+                          {item.isCustomTrained && (
+                            <Link href="/studios/image-studio#train" passHref className="block w-fit"> 
+                              <Button 
+                                variant="secondary" 
+                                className="h-6 px-2 text-xs rounded-md bg-primary/80 text-primary-foreground hover:bg-primary shadow-sm"
+                                onClick={(e) => e.stopPropagation()} // Prevent gallery item click
+                               >
+                                {item.ctaLabel || 'Train Yours'}
+                              </Button>
+                            </Link>
+                          )}
+                        </div>
+                        {/* Bottom section for prompt */}
+                        <p className="text-xs text-white/90 line-clamp-2 mt-auto">{item.alt}</p> 
                       </div>
-                    ) : (
-                      // Video element added
-                      <div className="bg-muted"> 
-                        <video
-                          src={item.src}
-                          autoPlay
-                          loop
-                          muted
-                          playsInline // Important for mobile playback
-                          className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
-                        />
-                      </div>
-                    )}
-                    {/* Hover Overlay with Prompt and Conditional Button */}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-3 flex flex-col justify-between">
-                      {/* Top section for button */}
-                      <div>
-                        {item.isCustomTrained && (
-                          <Link href="/studios/image-studio#train" passHref className="block w-fit"> 
-                            <Button 
-                              variant="secondary" 
-                              className="h-6 px-2 text-xs rounded-md bg-primary/80 text-primary-foreground hover:bg-primary shadow-sm"
-                              onClick={(e) => e.stopPropagation()} // Prevent gallery item click
-                             >
-                              {item.ctaLabel || 'Train Yours'}
-                            </Button>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Black Fade Overlay with Login/Signup - Only show when not logged in */}
+                {!isLoggedIn && !isCheckingAuth && (
+                  <div className="absolute -bottom-16 left-0 right-0 h-[400px] pointer-events-none bg-gradient-to-t from-black via-black/90 to-transparent">
+                    <div className="absolute bottom-0 left-0 right-0 flex flex-col items-center justify-center p-8 pointer-events-auto">
+                      <h3 className="text-3xl font-bold mb-6 bg-clip-text text-transparent bg-gradient-to-r from-sidebar-primary via-primary to-sidebar-primary animate-background-pan bg-[length:200%_auto]">
+                        Ready Set Go
+                      </h3>
+                      <div className="flex flex-wrap gap-4 justify-center">
+                        <Button asChild size="lg" className="gap-2 min-w-[120px] bg-white text-black hover:bg-white/90">
+                          <Link href="/auth?mode=login">
+                            Log In
                           </Link>
-                        )}
+                        </Button>
+                        <Button asChild size="lg" className="gap-2 min-w-[120px] bg-sidebar-primary hover:bg-sidebar-primary/90">
+                          <Link href="/auth?mode=signup">
+                            Sign Up
+                          </Link>
+                        </Button>
                       </div>
-                      {/* Bottom section for prompt */}
-                      <p className="text-xs text-white/90 line-clamp-2 mt-auto">{item.alt}</p> 
                     </div>
                   </div>
-                ))}
+                )}
               </div>
             );
           })()}

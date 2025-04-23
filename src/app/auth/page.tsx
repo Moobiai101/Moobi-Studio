@@ -35,7 +35,7 @@ export default function AuthForm() {
       <Card className="w-full max-w-md backdrop-blur-sm bg-card/80">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">Sign In / Sign Up</CardTitle>
-          <CardDescription>Access your AI Creative Suite account</CardDescription>
+          <CardDescription>Access your Moobi Labs account</CardDescription>
         </CardHeader>
         <CardContent>
           <Auth

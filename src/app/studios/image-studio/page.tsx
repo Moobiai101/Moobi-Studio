@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, FormEvent, useRef } from 'react';
+import { useRouter } from 'next/navigation';
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -15,7 +16,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Camera, Wand2, Image as ImageIcon, Sparkles, Settings2, RectangleHorizontal, Users, Loader2, Video, Download, Share2 } from "lucide-react";
+import { Camera, Wand2, Image as ImageIcon, Sparkles, Settings2, RectangleHorizontal, Users, Loader2, Video, Download, Share2, LogIn } from "lucide-react";
 import { 
   DropdownMenu, 
   DropdownMenuContent, 
@@ -28,6 +29,7 @@ import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
 import JSZip from 'jszip';
+import Link from 'next/link';
 
 // Define aspect ratios for images
 const imageAspectRatios = ["1:1", "16:9", "9:16", "4:3", "3:4"];
@@ -59,6 +61,7 @@ interface CustomModel {
 const WORKER_API_URL = 'https://my-ai-worker.khansameersam96.workers.dev'; // Deployed worker URL
 
 export default function ImageStudio() {
+  const router = useRouter();
   const supabase = createClient();
   const [prompt, setPrompt] = useState('');
   const [isFocused, setIsFocused] = useState(false);
@@ -68,6 +71,7 @@ export default function ImageStudio() {
   const [isLoading, setIsLoading] = useState(false);
   const [isGalleryLoading, setIsGalleryLoading] = useState(true);
   const [galleryError, setGalleryError] = useState<string | null>(null);
+  const [showLoginPrompt, setShowLoginPrompt] = useState(false);
 
   // --- State for Custom Models ---
   const [customModels, setCustomModels] = useState<CustomModel[]>([]);
@@ -96,106 +100,124 @@ export default function ImageStudio() {
   };
 
   // --- Fetch Models Function ---
-  const fetchModels = useCallback(async () => {
-    // Prevent setting loading true if polling in background
-    // setIsModelsLoading(true); 
-    // Set error null at start of fetch attempt
+  const fetchModels = useCallback(async (isInitialLoad = false) => {
+    if (isInitialLoad) {
+      setIsModelsLoading(true);
     setModelsError(null); 
+    }
+
     const token = await getSessionToken();
 
     if (!token) {
-      // Don't set a global error if polling fails silently
-      // setModelsError("Authentication required to load models.");
-      console.warn("Polling fetchModels: Authentication required.");
+      console.warn("Polling fetchModels: please login to see your custom models.");
       setCustomModels([]);
-      // setIsModelsLoading(false);
+      if (isInitialLoad) {
+        setIsModelsLoading(false);
+      }
       return;
     }
 
     try {
       const response = await fetch(`${WORKER_API_URL}/api/models`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Failed to fetch models' }));
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        let errorMessage = "Failed to fetch models";
+        try {
+            const errorData = await response.json();
+            if (errorData && typeof errorData.message === 'string') {
+                errorMessage = errorData.message;
+            }
+        } catch (parseError) {
+            console.error("Could not parse error response as JSON:", parseError);
+            errorMessage = `HTTP error! status: ${response.status}`;
+        }
+        throw new Error(errorMessage);
       }
 
       const data: CustomModel[] = await response.json();
-      setCustomModels(data); // Update the models state
-      // console.log("Fetched custom models (polling or initial):", data);
+      setCustomModels(data);
 
     } catch (error: any) {
-      // Avoid spamming toasts during polling errors
-      console.error("Error fetching custom models (polling or initial):", error);
-      // setModelsError(error.message || "An unknown error occurred.");
-      // toast.error("Failed to load custom models: " + (error.message || "Unknown error"));
-      // setCustomModels([]); // Don't clear models on a failed poll, keep last known good state
+      console.error("Error fetching custom models:", error);
+      if (isInitialLoad) {
+        const displayMessage = error.message || "An unknown error occurred while fetching models.";
+        setModelsError(displayMessage);
+        toast.error(displayMessage);
+        setCustomModels([]);
+      } else {
+        console.warn("failed to fetch models:", error.message);
+      }
     } finally {
-      // Only set loading false on the *initial* load, not during polling
-      // setIsModelsLoading(false); 
+      if (isInitialLoad) {
+         setIsModelsLoading(false);
+      }
     }
-  }, [supabase]); // Dependency array remains the same
+  }, [supabase]);
 
   // Define fetchGallery using useCallback
   const fetchGallery = useCallback(async () => {
-    // Set loading true when starting fetch, false in finally block
     setIsGalleryLoading(true); 
     setGalleryError(null);
+    setShowLoginPrompt(false);
     const token = await getSessionToken();
 
     if (!token) {
-      setGalleryError("Authentication required to view gallery.");
-      setGeneratedImages([]); // Clear images if not authenticated
+      setShowLoginPrompt(true);
+      setGeneratedImages([]);
       setIsGalleryLoading(false);
       return;
     }
 
     try {
       const response = await fetch(`${WORKER_API_URL}/api/gallery`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-        }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
 
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: 'Failed to fetch gallery' }));
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        let errorMessage = "Failed to fetch gallery";
+        try {
+            const errorData = await response.json();
+            if (errorData && typeof errorData.message === 'string') {
+                errorMessage = errorData.message;
+            }
+        } catch (parseError) {
+            console.error("Could not parse error response as JSON:", parseError);
+            errorMessage = `HTTP error! status: ${response.status}`;
+        }
+        throw new Error(errorMessage);
       }
 
       const data: GeneratedImage[] = await response.json();
       setGeneratedImages(data);
     } catch (error: any) {
       console.error("Error fetching gallery:", error);
-      setGalleryError(error.message || "An unknown error occurred.");
-      toast.error("Failed to load gallery: " + (error.message || "Unknown error"));
+      const displayMessage = error.message || "An unknown error occurred while fetching the gallery.";
+      setGalleryError(displayMessage);
+      toast.error(displayMessage);
+      setGeneratedImages([]);
     } finally {
-      setIsGalleryLoading(false); // Ensure loading is set to false
+      if (!showLoginPrompt) { 
+          setIsGalleryLoading(false);
+      }
     }
-  // Add supabase and other dependencies if they are used inside getSessionToken or WORKER_API_URL changes
-  }, [supabase]); // Dependency array for useCallback
+  }, [supabase]);
 
   // --- UseEffect to fetch data on mount ---
   useEffect(() => {
-    setIsModelsLoading(true); // Set loading true only for initial fetches
-    Promise.all([fetchGallery(), fetchModels()])
+    Promise.all([
+      fetchGallery(), 
+      fetchModels(true)
+    ])
       .catch(err => console.error("Error during initial data fetch:", err))
-      .finally(() => {
-         setIsModelsLoading(false); // Set loading false after *initial* fetches complete
-      });
   }, [fetchGallery, fetchModels]); 
 
   // --- UseEffect to check URL hash for opening training modal ---
   useEffect(() => {
     if (window.location.hash === '#train') {
       setIsTrainingModalOpen(true);
-      // Optional: remove the hash after opening modal to prevent re-opening on refresh
-      // window.history.replaceState(null, '', window.location.pathname + window.location.search);
     }
-    // Run only once on mount
   }, []);
 
   // --- UseEffect for Polling Model Status --- 
@@ -246,25 +268,24 @@ export default function ImageStudio() {
     };
   }, [customModels, fetchModels]); // Rerun this effect when models list changes
 
-  // --- Handle Submit - Update to use selectedModelIdentifier ---
+  // --- Handle Submit - Update auth handling for redirect ---
   const handleSubmit = async () => {
     setIsLoading(true);
-    toast.info("Starting image generation...");
     const token = await getSessionToken();
 
     if (!token) {
-      toast.error("Authentication required to generate images.");
       setIsLoading(false);
+      router.push('/auth');
       return;
     }
 
-    // Use selectedModelIdentifier in the payload
+    toast.info("Starting image generation...");
+    
     const payload = {
       prompt,
       aspectRatio: currentAspectRatio,
-      modelIdentifier: selectedModelIdentifier // Send the identifier (trigger_word or 'Standard')
+      modelIdentifier: selectedModelIdentifier
     };
-
     console.log("Sending generation request with payload:", payload);
 
     try {
@@ -278,31 +299,33 @@ export default function ImageStudio() {
       });
 
       if (!response.ok) {
-        let errorMsg = `HTTP error! status: ${response.status}`;
+        let errorMessage = "Image generation failed";
         try {
             const errorData = await response.json();
-            errorMsg = errorData.error || errorMsg; 
-        } catch (jsonError) {
-            console.error("Could not parse error response as JSON:", jsonError);
+            if (errorData && typeof errorData.message === 'string') {
+                errorMessage = errorData.message;
+            }
+        } catch (parseError) {
+            console.error("Could not parse error response as JSON:", parseError);
+            errorMessage = `HTTP error! status: ${response.status}`;
         }
-        throw new Error(errorMsg);
+        throw new Error(errorMessage);
       }
 
       const result = await response.json(); 
       console.log('Generation successful, worker response:', result);
       toast.success("Image generated successfully!");
-
-      fetchGallery(); // Refresh gallery after successful generation
+      fetchGallery();
 
     } catch (error: any) {
       console.error("Image generation process failed:", error);
-      toast.error("Image generation failed: " + (error.message || "Unknown error"));
+      toast.error(error.message || "An unknown error occurred during generation.");
     } finally {
       setIsLoading(false);
     }
   };
 
-  // --- Handle Training Submit - Add fetchModels call on success ---
+  // --- Handle Training Submit - Update error handling ---
   const handleTrainingSubmit = async (event: FormEvent<HTMLFormElement>) => {
      event.preventDefault();
     setIsTrainingSubmitting(true);
@@ -355,32 +378,30 @@ export default function ImageStudio() {
 
     // --- 4. Call POST /api/train-model ---
     try {
-        toast.info("Submitting training job to worker...");
+         toast.info("let Us Cook...");
         const response = await fetch(`${WORKER_API_URL}/api/train-model`, {
             method: 'POST',
-            headers: {
-                // Content-Type is automatically set by browser for FormData
-                'Authorization': `Bearer ${token}`,
-            },
+             headers: { 'Authorization': `Bearer ${token}` },
             body: formData,
         });
 
         if (!response.ok) {
-            // Attempt to read error message from response body
-            let errorMsg = `Training submission failed! Status: ${response.status}`;
+             let errorMessage = "Training submission failed";
             try {
                 const errorData = await response.json();
-                errorMsg = errorData.error || errorMsg; 
+                 if (errorData && typeof errorData.message === 'string') {
+                     errorMessage = errorData.message;
+                 }
             } catch (jsonError) {
                 console.error("Could not parse error response as JSON:", jsonError);
+                 errorMessage = `HTTP error! status: ${response.status}`;
             }
-            throw new Error(errorMsg);
+             throw new Error(errorMessage);
         }
 
-        // Training request was accepted by the worker (202 Accepted)
         const result = await response.json(); 
-        console.log('Training job submitted successfully, worker response:', result);
-        toast.success(`Training started for model: ${triggerWord}! (ID: ${result.data?.id?.substring(0, 8)}...)`);
+         console.log('Training Started successfully:', result);
+         toast.success(`Training started for model: ${triggerWord}!`);
         
         // --- 5. Handle Success: Close modal & Reset Form ---
         setIsTrainingModalOpen(false); 
@@ -391,11 +412,11 @@ export default function ImageStudio() {
         if(fileInput) fileInput.value = '';
         
         // *** Refresh the models list ***
-        fetchModels();
+         fetchModels(true);
 
     } catch (error: any) {
         console.error("Training submission failed:", error);
-        toast.error(`Training submission failed: ${error.message || "Unknown error"}`);
+         toast.error(error.message || "An unknown error occurred during training submission.");
     } finally {
         setIsTrainingSubmitting(false);
     }
@@ -552,16 +573,68 @@ export default function ImageStudio() {
                     </DialogDescription>
                     </DialogHeader>
 
-                    {/* Placeholder Example Images (Like Krea Reference) */}
-                    <div className="flex justify-center items-center gap-2 my-6">
-                        {/* Simple placeholder divs, replace with <img> if needed */}
-                        {/* Added pulse animation with delay */}
-                        <div className="w-30 h-40 bg-gradient-to-br from-purple-400 to-indigo-600 rounded-lg shadow-md transform -rotate-6 animate-pulse duration-[4000ms] delay-[0ms]"></div>
-                        {/* Added pulse animation with different delay */}
-                        <div className="w-30 h-40 bg-gradient-to-br from-blue-400 to-cyan-500 rounded-lg shadow-lg z-10 animate-pulse duration-[4000ms] delay-[500ms]"></div>
-                        {/* Added pulse animation with yet another delay */}
-                        <div className="w-30 h-40 bg-gradient-to-br from-teal-400 to-green-500 rounded-lg shadow-md transform rotate-6 animate-pulse duration-[4000ms] delay-[1000ms]"></div>
+                    {/* Example Training Images with Prompts */}
+                    <div className="flex justify-center items-center gap-4 my-6">
+                        {/* Real training images with prompts overlay and animations */}
+                        <div className="w-36 h-48 rounded-lg overflow-hidden shadow-md transform -rotate-3 relative group hover:z-10 animate-float-slow hover:scale-105 transition-all duration-500">
+                            <img 
+                                src="/gallery/train-images/carry_minati_at_the_nasa__wearing_white_coat__stan (1).png" 
+                                alt="Training example 1" 
+                                className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 flex items-end">
+                                <p className="text-xs text-white/90 line-clamp-3">Carry Minati at NASA wearing a white lab coat</p>
+                            </div>
+                        </div>
+                        <div className="w-36 h-48 rounded-lg overflow-hidden shadow-lg z-10 relative group hover:z-20 animate-float-medium hover:scale-105 transition-all duration-500">
+                            <img 
+                                src="/gallery/train-images/carry_minati_carry_mianti_at_the_cricket_stadium__.png" 
+                                alt="Training example 2" 
+                                className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 flex items-end">
+                                <p className="text-xs text-white/90 line-clamp-3">Carry Minati at cricket stadium, watching a match</p>
+                            </div>
+                        </div>
+                        <div className="w-36 h-48 rounded-lg overflow-hidden shadow-md transform rotate-3 relative group hover:z-10 animate-float-fast hover:scale-105 transition-all duration-500">
+                            <img 
+                                src="/gallery/train-images/man_at_beach.png" 
+                                alt="Training example 3" 
+                                className="w-full h-full object-cover"
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity p-2 flex items-end">
+                                <p className="text-xs text-white/90 line-clamp-3">Man at the beach with sun in background</p>
+                            </div>
+                        </div>
                     </div>
+
+                    {/* CSS keyframes and animation classes for the image cards */}
+                    <style jsx global>{`
+                        @keyframes float-slow {
+                            0% { transform: translateY(0px) rotate(-3deg); }
+                            50% { transform: translateY(-10px) rotate(-2deg); }
+                            100% { transform: translateY(0px) rotate(-3deg); }
+                        }
+                        @keyframes float-medium {
+                            0% { transform: translateY(0px); }
+                            65% { transform: translateY(-8px); }
+                            100% { transform: translateY(0px); }
+                        }
+                        @keyframes float-fast {
+                            0% { transform: translateY(0px) rotate(3deg); }
+                            35% { transform: translateY(-12px) rotate(4deg); }
+                            100% { transform: translateY(0px) rotate(3deg); }
+                        }
+                        .animate-float-slow {
+                            animation: float-slow 6s ease-in-out infinite;
+                        }
+                        .animate-float-medium {
+                            animation: float-medium 4.5s ease-in-out infinite;
+                        }
+                        .animate-float-fast {
+                            animation: float-fast 5s ease-in-out infinite;
+                        }
+                    `}</style>
 
                     {/* Form fields with stacked labels */}
                     <div className="space-y-6"> 
@@ -624,34 +697,52 @@ export default function ImageStudio() {
         </div>
       </div>
       
-      <div className="w-full">
+      <div className="w-full mt-12">
         <h2 className="text-xl font-semibold mb-6">Generated Images</h2>
-        {isGalleryLoading && (
+        
+        {showLoginPrompt && (
+          <div className="text-center flex justify-center py-10"> 
+            <Button 
+              asChild 
+              size="lg" 
+              className={cn(
+                "gap-2",
+                "bg-gradient-to-r from-sidebar-primary via-primary to-sidebar-primary animate-background-pan bg-[length:200%_auto]",
+                "hover:brightness-110 transition-all"
+              )}
+            >
+              <Link href="/auth">
+                Login / Signup
+              </Link>
+            </Button>
+          </div>
+        )}
+
+        {!showLoginPrompt && isGalleryLoading && (
           <div className="flex justify-center items-center p-10">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         )}
-        {galleryError && (
-          <div className="text-center text-red-500 p-10">
+        
+        {!showLoginPrompt && galleryError && (
+          <div className="text-center text-red-500 p-10 border border-dashed border-red-500/30 rounded-lg bg-red-500/5">
             Error loading gallery: {galleryError}
           </div>
         )}
-        {!isGalleryLoading && !galleryError && generatedImages.length === 0 && (
-           <div className="text-center text-muted-foreground p-10">
+        
+        {!showLoginPrompt && !isGalleryLoading && !galleryError && generatedImages.length === 0 && (
+           <div className="text-center text-muted-foreground p-10 border border-dashed border-border rounded-lg bg-card/50">
             No images generated yet. Use the prompt above to create some!
           </div>
         )}
-        {!isGalleryLoading && !galleryError && generatedImages.length > 0 && (
-          // --- Masonry Layout using CSS columns ---
-          // Responsive columns: 2 on small, 3 on md, 4 on lg, 5 on xl
+        
+        {!showLoginPrompt && !isGalleryLoading && !galleryError && generatedImages.length > 0 && (
           <div className="my-masonry-grid columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 space-y-4">
             {generatedImages.map((image) => (
-              // Added 'break-inside-avoid' to prevent items splitting across columns
               <div key={image.id} className="bg-card border rounded-lg overflow-hidden group cursor-pointer relative shadow-sm hover:shadow-md transition-shadow break-inside-avoid">
                 <div 
                   className={cn(
                     "bg-muted flex items-center justify-center",
-                    // Aspect ratio classes should work correctly now within the flow
                     image.aspectRatio === "1:1" && "aspect-square",
                     image.aspectRatio === "16:9" && "aspect-video",
                     image.aspectRatio === "9:16" && "aspect-[9/16]",
@@ -664,25 +755,21 @@ export default function ImageStudio() {
                       src={image.displayUrl} 
                       alt={image.prompt || 'Generated image'} 
                       className="object-cover w-full h-full" 
-                      // Add loading="lazy" for performance on galleries
                       loading="lazy" 
                     />
                   ) : (
                     <ImageIcon className="h-10 w-10 text-muted-foreground/30" /> 
                   )}
                 </div>
-                {/* --- Hover Overlay --- */}
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-3 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between">
-                  {/* Prompt at the bottom */}
                   <p className="text-xs text-white/90 line-clamp-3 mt-auto">{image.prompt || 'No prompt provided'}</p>
-                  {/* Action buttons at the top right */}
                   <div className="absolute top-2 right-2 flex items-center gap-1.5">
                      <Button 
                        variant="ghost" 
                        size="icon" 
                        className="h-7 w-7 text-white/80 hover:bg-black/30 hover:text-white"
                        title="Share"
-                       onClick={(e) => { e.stopPropagation(); handleShare(image.displayUrl); }} // Prevent card click
+                       onClick={(e) => { e.stopPropagation(); handleShare(image.displayUrl); }}
                      >
                        <Share2 className="h-4 w-4" />
                      </Button>
@@ -691,7 +778,7 @@ export default function ImageStudio() {
                        size="icon" 
                        className="h-7 w-7 text-white/80 hover:bg-black/30 hover:text-white"
                        title="Download"
-                       onClick={(e) => { e.stopPropagation(); handleDownload(image.displayUrl, image.prompt); }} // Prevent card click
+                       onClick={(e) => { e.stopPropagation(); handleDownload(image.displayUrl, image.prompt); }}
                      >
                        <Download className="h-4 w-4" />
                      </Button>
