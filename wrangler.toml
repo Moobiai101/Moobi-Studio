@@ -4,6 +4,12 @@ compatibility_date = "2024-04-24"
 # Specify the output directory for Pages - required property
 pages_build_output_dir = "dist"
 
+# R2 asset binding for images/videos (runtime access)
+# Make sure this is also configured in the Pages dashboard settings under Functions -> R2 bucket bindings
+[[env.production.r2_buckets]]
+binding = "R2_ASSETS"
+bucket_name = "cdn-images"
+
 # Build configuration
 [build]
 command = "npm run cf:build"
