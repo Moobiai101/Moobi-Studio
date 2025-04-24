@@ -27,7 +27,3 @@ NODE_OPTIONS = "--max-old-space-size=2048" # Limit memory during build
 NODE_ENV = "production"
 NEXT_TELEMETRY_DISABLED = "1"
 
-# R2 asset binding for images/videos - Should be under env.production
-[[env.production.r2_buckets]]
-binding = "R2_ASSETS"
-bucket_name = "cdn-images" 
