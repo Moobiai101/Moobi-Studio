@@ -6,8 +6,8 @@ const nextConfig: NextConfig = {
     // This setting ensures production builds complete successfully even if there are warnings
     ignoreDuringBuilds: true,
   },
-  // Use static export for Cloudflare Pages deployment
-  output: 'export',
+  // Configure static export for Cloudflare Pages
+  output: 'export', 
   // Optimize production builds
   productionBrowserSourceMaps: false,
   // Remove console logs in production
@@ -16,10 +16,19 @@ const nextConfig: NextConfig = {
       exclude: ['error', 'warn'],
     } : false,
   },
-  // Disable image optimization (we're using R2 for images)
+  // Disable image optimization (we're using external CDN)
   images: {
     unoptimized: true,
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'pub-fa2dabd7eff54614b1563a0863fb7cbc.r2.dev',
+        pathname: '/**',
+      },
+    ],
   },
+  // Configure which output files to include/exclude in the deployment
+  distDir: 'dist',
 };
 
 export default nextConfig;

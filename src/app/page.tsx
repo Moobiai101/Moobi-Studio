@@ -16,6 +16,9 @@ if (typeof window !== 'undefined') {
   gsap.registerPlugin(ScrollTrigger);
 }
 
+// Use Cloudflare R2 for assets (domain to be updated with your actual R2 domain)
+const R2_BASE_URL = "https://pub-fa2dabd7eff54614b1563a0863fb7cbc.r2.dev";
+
 const features = [
   {
     title: 'Video Studio',
@@ -62,7 +65,19 @@ const features = [
 export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [isCheckingAuth, setIsCheckingAuth] = useState(true);
+  const [galleryItems, setGalleryItems] = useState<GalleryItem[]>([]);
+  const [isGalleryLoading, setIsGalleryLoading] = useState(true);
   const supabase = createClient();
+
+  // Type for gallery items
+  type GalleryItem = {
+    id: string;
+    type: 'image' | 'video';
+    src: string;
+    alt: string;
+    isCustomTrained?: boolean;
+    ctaLabel?: string;
+  };
 
   // Check authentication status
   useEffect(() => {
@@ -90,6 +105,86 @@ export default function Home() {
       subscription.unsubscribe();
     };
   }, [supabase]);
+
+  // Fetch gallery data
+  useEffect(() => {
+    const fetchGalleryData = async () => {
+      setIsGalleryLoading(true);
+      try {
+        // Mapping prompts to their URLs
+        const prompts: { [key: string]: string } = {
+          'beast-image-7.jpg': 'carry minati at the beach',
+          'beast-image-2.jpg': 'carry minati at the park, sitting on the bench, giving a pose for the camera',
+          'e12032fc-aaae-4dac-914c-7e094f08284c.mp4': 'Anime girl with colorful umbrella sitting with a frog in the rain, night',
+          'model-image-1-1.jpg': 'Salman Khan holding a red rose on a park bench, photorealistic',
+          'img.webp': 'Woman with pink flower in hair and sunglasses, portrait',
+          '4e219ce5-c345-46f2-b779-8f819c6f6942-video.mp4': 'Blue Ferrari, front view, cinematic studio shot, headlights on',
+          'img-1.webp': 'Man playing chess, black and white, dramatic low-key lighting',
+          'img-2.webp': 'Woman in black suit, desert dunes, castle background, sunset',
+          'img-3.webp': 'Miniature people climbing on giant face, surreal macro',
+          'model-image-1-2-Picsart-AiImageEnhancer.jpg': 'salman khan at the beach, full wide shot',
+          'img-4.webp': 'Cat wearing traditional Arab clothing and glasses, city skyline view',
+          'img-5.webp': 'Woman with white braid in black leather trench coat, dynamic pose, studio shot',
+          'bedea9c3-6c98-4ed9-93fe-98ca602682f5-video.mp4': 'Cinematic close-up of a small, fuzzy teal monster in a dark, mossy forest.',
+          'img-6.webp': 'Mercedes G-Wagon on alien planet landscape, planet in sky',
+          'd8ed99ce-7f09-4c12-bdf6-8af929eafc71-video.mp4': 'Unicorn running on beach at sunset during a lightning storm',
+          'img-7.webp': 'Cute furry creature in winter clothes holding a Coca-Cola can, snow scene',
+          'img-8.webp': 'Woman wearing a ballgown made of pink flowers, studio photo',
+          '28fa461d-8e86-430d-bb87-51b426da6b7a.mp4': 'Miniature people interacting with giant pink metallic letters spelling "CHARMS", reflective plaza.',
+          'img-9.webp': 'Motorcycle made of transparent clear acrylic, studio shot',
+          'img-10.webp': 'Graffiti-covered retro rocket ship in a desert field with flowers',
+          'download-7-Picsart-AiImageEnhancer.jpeg': 'Taylor Swift in a red dress, glamour shot, red background',
+          'download-8-Picsart-AiImageEnhancer.jpeg': 'Taylor Swift in a black turtleneck, bokeh portrait',
+          'download-9-Picsart-AiImageEnhancer.jpeg': 'Portrait of Robert Downey Jr. as Tony Stark, stylized',
+          'download-10-Picsart-AiImageEnhancer.jpeg': 'Photorealistic concept art of Robert Downey Jr as Doctor Doom, wearing armor and green hooded cloak',
+          'download-11-Picsart-AiImageEnhancer.jpeg': 'taylor swift, happy face, with brown hair, blue sky with seagulls, Studio Ghibli style',
+          'download-12-Picsart-AiImageEnhancer.jpeg': 'Illustration of Shah Rukh Khan waving to a crowd from a balcony, golden hour lighting',
+          'download-13.jpg': 'Anime illustration of Cristiano Ronaldo smiling, holding the Euro 2016 trophy, Portugal jersey',
+          'download-14.jpg': 'Anime illustration of Virat Kohli celebrating in Indian cricket jersey, pointing skyward'
+        };
+
+        // Create gallery items using external URLs
+        const items: GalleryItem[] = [
+          { id: "img1", type: 'image', src: `${R2_BASE_URL}/images/model-image-1-2-Picsart-AiImageEnhancer.jpg`, alt: prompts['model-image-1-2-Picsart-AiImageEnhancer.jpg'] || 'AI Generated Model 1', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "img2", type: 'image', src: `${R2_BASE_URL}/images/download-7-Picsart-AiImageEnhancer.jpeg`, alt: prompts['download-7-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 7', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "vid1", type: 'video', src: `${R2_BASE_URL}/videos/28fa461d-8e86-430d-bb87-51b426da6b7a.mp4`, alt: prompts['28fa461d-8e86-430d-bb87-51b426da6b7a.mp4'] || 'AI Generated Video 1' },
+          { id: "img3", type: 'image', src: `${R2_BASE_URL}/images/download-8-Picsart-AiImageEnhancer.jpeg`, alt: prompts['download-8-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 8', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "img4", type: 'image', src: `${R2_BASE_URL}/images/img-8.webp`, alt: prompts['img-8.webp'] || 'AI Generated WebP 8' },
+          { id: "vid2", type: 'video', src: `${R2_BASE_URL}/videos/bedea9c3-6c98-4ed9-93fe-98ca602682f5-video.mp4`, alt: prompts['bedea9c3-6c98-4ed9-93fe-98ca602682f5-video.mp4'] || 'AI Generated Video 2' },
+          { id: "img5", type: 'image', src: `${R2_BASE_URL}/images/download-9-Picsart-AiImageEnhancer.jpeg`, alt: prompts['download-9-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 9', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "img6", type: 'image', src: `${R2_BASE_URL}/images/download-10-Picsart-AiImageEnhancer.jpeg`, alt: prompts['download-10-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 10', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "img7", type: 'image', src: `${R2_BASE_URL}/images/beast-image-2.jpg`, alt: prompts['beast-image-2.jpg'] || 'AI Generated Beast 2', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "vid3", type: 'video', src: `${R2_BASE_URL}/videos/d8ed99ce-7f09-4c12-bdf6-8af929eafc71-video.mp4`, alt: prompts['d8ed99ce-7f09-4c12-bdf6-8af929eafc71-video.mp4'] || 'AI Generated Video 3' },
+          { id: "img8", type: 'image', src: `${R2_BASE_URL}/images/img-6.webp`, alt: prompts['img-6.webp'] || 'AI Generated WebP 6' },
+          { id: "img9", type: 'image', src: `${R2_BASE_URL}/images/beast-image-7.jpg`, alt: prompts['beast-image-7.jpg'] || 'AI Generated Beast 7', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "vid4", type: 'video', src: `${R2_BASE_URL}/videos/e12032fc-aaae-4dac-914c-7e094f08284c.mp4`, alt: prompts['e12032fc-aaae-4dac-914c-7e094f08284c.mp4'] || 'AI Generated Video 4' },
+          { id: "img10", type: 'image', src: `${R2_BASE_URL}/images/model-image-1.jpg`, alt: prompts['model-image-1-1.jpg'] || 'AI Generated Model 1-1', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "img11", type: 'image', src: `${R2_BASE_URL}/images/img.webp`, alt: prompts['img.webp'] || 'AI Generated WebP' },
+          { id: "vid5", type: 'video', src: `${R2_BASE_URL}/videos/4e219ce5-c345-46f2-b779-8f819c6f6942-video.mp4`, alt: prompts['4e219ce5-c345-46f2-b779-8f819c6f6942-video.mp4'] || 'AI Generated Video 5' },
+          { id: "img12", type: 'image', src: `${R2_BASE_URL}/images/img-1.webp`, alt: prompts['img-1.webp'] || 'AI Generated WebP 1' },
+          { id: "img13", type: 'image', src: `${R2_BASE_URL}/images/img-2.webp`, alt: prompts['img-2.webp'] || 'AI Generated WebP 2' },
+          { id: "img14", type: 'image', src: `${R2_BASE_URL}/images/img-3.webp`, alt: prompts['img-3.webp'] || 'AI Generated WebP 3' },
+          { id: "img15", type: 'image', src: `${R2_BASE_URL}/images/img-4.webp`, alt: prompts['img-4.webp'] || 'AI Generated WebP 4' },
+          { id: "img16", type: 'image', src: `${R2_BASE_URL}/images/img-5.webp`, alt: prompts['img-5.webp'] || 'AI Generated WebP 5' },
+          { id: "img17", type: 'image', src: `${R2_BASE_URL}/images/img-7.webp`, alt: prompts['img-7.webp'] || 'AI Generated WebP 7' },
+          { id: "img18", type: 'image', src: `${R2_BASE_URL}/images/img-9.webp`, alt: prompts['img-9.webp'] || 'AI Generated WebP 9' },
+          { id: "img19", type: 'image', src: `${R2_BASE_URL}/images/img-10.webp`, alt: prompts['img-10.webp'] || 'AI Generated WebP 10' },
+          { id: "img20", type: 'image', src: `${R2_BASE_URL}/images/download-11-Picsart-AiImageEnhancer.jpeg`, alt: prompts['download-11-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 11', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "img21", type: 'image', src: `${R2_BASE_URL}/images/download-12-Picsart-AiImageEnhancer.jpeg`, alt: prompts['download-12-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 12', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "img22", type: 'image', src: `${R2_BASE_URL}/images/download-13.jpg`, alt: prompts['download-13.jpg'] || 'AI Generated Art 13', isCustomTrained: true, ctaLabel: 'Train Yours' },
+          { id: "img23", type: 'image', src: `${R2_BASE_URL}/images/download-14.jpg`, alt: prompts['download-14.jpg'] || 'AI Generated Art 14', isCustomTrained: true, ctaLabel: 'Train Yours' }
+        ];
+
+        setGalleryItems(items);
+      } catch (error) {
+        console.error('Error fetching gallery data:', error);
+      } finally {
+        setIsGalleryLoading(false);
+      }
+    };
+
+    fetchGalleryData();
+  }, []);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
@@ -165,124 +260,63 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Gallery section - simplified to ensure visibility */}
+      {/* Gallery section - loading items dynamically from external CDN */}
       <section id="gallery" className="mb-16 opacity-100">
         <div className="section-reveal">
           <h2 className="text-2xl font-bold mb-8 text-center">From Our Studios</h2>
           
-          {/* Updated Gallery Items Data from public/gallery */}
-          {(() => {
-            // Mapping prompts to their URLs (or unique parts of URLs)
-            const prompts: { [key: string]: string } = {
-              '/gallery/images/beast-image-7.jpg': 'carry minati at the beach',
-              '/gallery/images/beast-image-2.jpg': 'carry minati at the park, sitting on the bench, giving a pose for the camera',
-              '/gallery/videos/e12032fc-aaae-4dac-914c-7e094f08284c.mp4': 'Anime girl with colorful umbrella sitting with a frog in the rain, night',
-              '/gallery/images/model-image-1 (1).jpg': 'Salman Khan holding a red rose on a park bench, photorealistic',
-              '/gallery/images/img.webp': 'Woman with pink flower in hair and sunglasses, portrait',
-              '/gallery/videos/4e219ce5-c345-46f2-b779-8f819c6f6942-video.mp4': 'Blue Ferrari, front view, cinematic studio shot, headlights on',
-              '/gallery/images/img (1).webp': 'Man playing chess, black and white, dramatic low-key lighting',
-              '/gallery/images/img (2).webp': 'Woman in black suit, desert dunes, castle background, sunset',
-              '/gallery/images/img (3).webp': 'Miniature people climbing on giant face, surreal macro',
-              '/gallery/images/model-image-1 (2)-Picsart-AiImageEnhancer.jpg': 'salman khan at the beach, full wide shot',
-              '/gallery/images/img (4).webp': 'Cat wearing traditional Arab clothing and glasses, city skyline view',
-              '/gallery/images/img (5).webp': 'Woman with white braid in black leather trench coat, dynamic pose, studio shot',
-              '/gallery/videos/bedea9c3-6c98-4ed9-93fe-98ca602682f5-video.mp4': 'Cinematic close-up of a small, fuzzy teal monster in a dark, mossy forest.',
-              '/gallery/images/img (6).webp': 'Mercedes G-Wagon on alien planet landscape, planet in sky',
-              '/gallery/videos/d8ed99ce-7f09-4c12-bdf6-8af929eafc71-video.mp4': 'Unicorn running on beach at sunset during a lightning storm',
-              '/gallery/images/img (7).webp': 'Cute furry creature in winter clothes holding a Coca-Cola can, snow scene',
-              '/gallery/images/img (8).webp': 'Woman wearing a ballgown made of pink flowers, studio photo',
-              '/gallery/videos/28fa461d-8e86-430d-bb87-51b426da6b7a.mp4': 'Miniature people interacting with giant pink metallic letters spelling "CHARMS", reflective plaza.',
-              '/gallery/images/img (9).webp': 'Motorcycle made of transparent clear acrylic, studio shot',
-              '/gallery/images/img (10).webp': 'Graffiti-covered retro rocket ship in a desert field with flowers',
-              '/gallery/images/download (7)-Picsart-AiImageEnhancer.jpeg': 'Taylor Swift in a red dress, glamour shot, red background',
-              '/gallery/images/download (8)-Picsart-AiImageEnhancer.jpeg': 'Taylor Swift in a black turtleneck, bokeh portrait',
-              '/gallery/images/download (9)-Picsart-AiImageEnhancer.jpeg': 'Portrait of Robert Downey Jr. as Tony Stark, stylized',
-              '/gallery/images/download (10)-Picsart-AiImageEnhancer.jpeg': 'Photorealistic concept art of Robert Downey Jr as Doctor Doom, wearing armor and green hooded cloak',
-              '/gallery/images/download (11)-Picsart-AiImageEnhancer.jpeg': 'taylor swift, happy face, with brown hair, blue sky with seagulls, Studio Ghibli style',
-              '/gallery/images/download (12)-Picsart-AiImageEnhancer.jpeg': 'Illustration of Shah Rukh Khan waving to a crowd from a balcony, golden hour lighting',
-              '/gallery/images/download (13).jpg': 'Anime illustration of Cristiano Ronaldo smiling, holding the Euro 2016 trophy, Portugal jersey',
-              '/gallery/images/download (14).jpg': 'Anime illustration of Virat Kohli celebrating in Indian cricket jersey, pointing skyward'
-            };
-
-            const galleryItems = [
-              // Images & Videos with updated prompts and custom trained flags
-              { id: "img1", type: 'image', src: '/gallery/images/model-image-1 (2)-Picsart-AiImageEnhancer.jpg', alt: prompts['/gallery/images/model-image-1 (2)-Picsart-AiImageEnhancer.jpg'] || 'AI Generated Model 1', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "img2", type: 'image', src: '/gallery/images/download (7)-Picsart-AiImageEnhancer.jpeg', alt: prompts['/gallery/images/download (7)-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 7', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "vid1", type: 'video', src: '/gallery/videos/28fa461d-8e86-430d-bb87-51b426da6b7a.mp4', alt: prompts['/gallery/videos/28fa461d-8e86-430d-bb87-51b426da6b7a.mp4'] || 'AI Generated Video 1' },
-              { id: "img3", type: 'image', src: '/gallery/images/download (8)-Picsart-AiImageEnhancer.jpeg', alt: prompts['/gallery/images/download (8)-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 8', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "img4", type: 'image', src: '/gallery/images/img (8).webp', alt: prompts['/gallery/images/img (8).webp'] || 'AI Generated WebP 8' },
-              { id: "vid2", type: 'video', src: '/gallery/videos/bedea9c3-6c98-4ed9-93fe-98ca602682f5-video.mp4', alt: prompts['/gallery/videos/bedea9c3-6c98-4ed9-93fe-98ca602682f5-video.mp4'] || 'AI Generated Video 2' },
-              { id: "img5", type: 'image', src: '/gallery/images/download (9)-Picsart-AiImageEnhancer.jpeg', alt: prompts['/gallery/images/download (9)-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 9', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "img6", type: 'image', src: '/gallery/images/download (10)-Picsart-AiImageEnhancer.jpeg', alt: prompts['/gallery/images/download (10)-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 10', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "img7", type: 'image', src: '/gallery/images/beast-image-2.jpg', alt: prompts['/gallery/images/beast-image-2.jpg'] || 'AI Generated Beast 2', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "vid3", type: 'video', src: '/gallery/videos/d8ed99ce-7f09-4c12-bdf6-8af929eafc71-video.mp4', alt: prompts['/gallery/videos/d8ed99ce-7f09-4c12-bdf6-8af929eafc71-video.mp4'] || 'AI Generated Video 3' },
-              { id: "img8", type: 'image', src: '/gallery/images/img (6).webp', alt: prompts['/gallery/images/img (6).webp'] || 'AI Generated WebP 6' },
-              { id: "img9", type: 'image', src: '/gallery/images/download (11)-Picsart-AiImageEnhancer.jpeg', alt: prompts['/gallery/images/download (11)-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 11', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "img10", type: 'image', src: '/gallery/images/download (13).jpg', alt: prompts['/gallery/images/download (13).jpg'] || 'AI Generated Art 13', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "vid4", type: 'video', src: '/gallery/videos/e12032fc-aaae-4dac-914c-7e094f08284c.mp4', alt: prompts['/gallery/videos/e12032fc-aaae-4dac-914c-7e094f08284c.mp4'] || 'AI Generated Video 4' },
-              { id: "img11", type: 'image', src: '/gallery/images/img (1).webp', alt: prompts['/gallery/images/img (1).webp'] || 'AI Generated WebP 1' },
-              { id: "img12", type: 'image', src: '/gallery/images/model-image-1 (1).jpg', alt: prompts['/gallery/images/model-image-1 (1).jpg'] || 'AI Generated Model 2', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "img13", type: 'image', src: '/gallery/images/download (12)-Picsart-AiImageEnhancer.jpeg', alt: prompts['/gallery/images/download (12)-Picsart-AiImageEnhancer.jpeg'] || 'AI Generated Art 12', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "img14", type: 'image', src: '/gallery/images/download (14).jpg', alt: prompts['/gallery/images/download (14).jpg'] || 'AI Generated Art 14', isCustomTrained: true, ctaLabel: 'Train Yours' },
-              { id: "img15", type: 'image', src: '/gallery/images/img (10).webp', alt: prompts['/gallery/images/img (10).webp'] || 'AI Generated WebP 10' },
-              { id: "img16", type: 'image', src: '/gallery/images/img (9).webp', alt: prompts['/gallery/images/img (9).webp'] || 'AI Generated WebP 9' },
-              { id: "vid5", type: 'video', src: '/gallery/videos/4e219ce5-c345-46f2-b779-8f819c6f6942-video.mp4', alt: prompts['/gallery/videos/4e219ce5-c345-46f2-b779-8f819c6f6942-video.mp4'] || 'AI Generated Video 5' },
-              { id: "img17", type: 'image', src: '/gallery/images/img (7).webp', alt: prompts['/gallery/images/img (7).webp'] || 'AI Generated WebP 7' },
-              { id: "img18", type: 'image', src: '/gallery/images/img (5).webp', alt: prompts['/gallery/images/img (5).webp'] || 'AI Generated WebP 5' },
-              { id: "img19", type: 'image', src: '/gallery/images/img (4).webp', alt: prompts['/gallery/images/img (4).webp'] || 'AI Generated WebP 4' },
-              { id: "img20", type: 'image', src: '/gallery/images/img (3).webp', alt: prompts['/gallery/images/img (3).webp'] || 'AI Generated WebP 3' },
-              { id: "img21", type: 'image', src: '/gallery/images/img (2).webp', alt: prompts['/gallery/images/img (2).webp'] || 'AI Generated WebP 2' },
-              { id: "img22", type: 'image', src: '/gallery/images/img.webp', alt: prompts['/gallery/images/img.webp'] || 'AI Generated WebP Base' },
-              { id: "img23", type: 'image', src: '/gallery/images/beast-image-7.jpg', alt: prompts['/gallery/images/beast-image-7.jpg'] || 'AI Generated Beast 7', isCustomTrained: true, ctaLabel: 'Train Yours' },
-            ];
-
-            return (
-              <div className="relative">
-                {/* Masonry Layout (similar to Image Studio) */}
+          <div className="relative">
+            {isGalleryLoading ? (
+              <div className="text-center py-20">
+                <div className="inline-block h-8 w-8 animate-spin rounded-full border-4 border-solid border-current border-r-transparent" role="status">
+                  <span className="sr-only">Loading...</span>
+                </div>
+                <p className="mt-4 text-muted-foreground">Loading gallery...</p>
+              </div>
+            ) : (
+              <>
+                {/* Masonry Layout with externally loaded images */}
                 <div className="columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
                   {galleryItems.map((item) => (
                     <div key={item.id} className="overflow-hidden rounded-lg border bg-card/60 shadow-sm break-inside-avoid group relative">
                       {item.type === 'image' ? (
-                        // Removed explicit aspect ratio class from container
                         <div className="bg-muted"> 
                           <Image 
-                            src={item.src} 
+                            src={item.src}
                             alt={item.alt}
                             width={500}
                             height={500}
                             className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
+                            unoptimized
                           />
                         </div>
                       ) : (
-                        // Video element added
                         <div className="bg-muted"> 
                           <video
                             src={item.src}
                             autoPlay
                             loop
                             muted
-                            playsInline // Important for mobile playback
+                            playsInline
                             className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
                           />
                         </div>
                       )}
                       {/* Hover Overlay with Prompt and Conditional Button */}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-3 flex flex-col justify-between">
-                        {/* Top section for button */}
                         <div>
                           {item.isCustomTrained && (
                             <Link href="/studios/image-studio#train" passHref className="block w-fit"> 
                               <Button 
                                 variant="secondary" 
                                 className="h-6 px-2 text-xs rounded-md bg-primary/80 text-primary-foreground hover:bg-primary shadow-sm"
-                                onClick={(e) => e.stopPropagation()} // Prevent gallery item click
-                               >
+                                onClick={(e) => e.stopPropagation()} 
+                              >
                                 {item.ctaLabel || 'Train Yours'}
                               </Button>
                             </Link>
                           )}
                         </div>
-                        {/* Bottom section for prompt */}
                         <p className="text-xs text-white/90 line-clamp-2 mt-auto">{item.alt}</p> 
                       </div>
                     </div>
@@ -311,12 +345,11 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-              </div>
-            );
-          })()}
-            </div>
+              </>
+            )}
+          </div>
+        </div>
       </section>
-
     </div>
   );
 }
