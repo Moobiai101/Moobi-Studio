@@ -1,23 +1,13 @@
 name = "moobi-studio"
 compatibility_date = "2024-04-24"
 
-# Configure Pages for static site output
-[build]
-command = "npm run cf:build"
+# Specify the output directory for Pages - required property
+pages_build_output_dir = "dist"
 
 # Disable caching to prevent large files
-[build.environment]
+[env.production]
 NODE_ENV = "production"
 NEXT_TELEMETRY_DISABLED = "1"
-
-# Set output directory for static files
-[site]
-bucket = "./dist"
-
-# Configure Rules for asset handling - prevents 43MB+ cache files
-[rules]
-[rules.cache_key_default]
-exclude_assets = ["**/*.pack"]
 
 # R2 asset binding for images/videos
 [[r2_buckets]]

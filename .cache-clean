@@ -1,0 +1,5 @@
+**/*.pack
+.next/cache/**
+dist/cache/**
+dist/_next/cache/**
+.vercel/output/static/_next/cache/** 

@@ -41,9 +41,21 @@ const nextConfig: NextConfig = {
           maxSize: 20000000, // 20MB max chunks
         }
       };
+      
+      // Disable file caching
+      config.cache = false;
     }
     return config;
   },
+  // Explicitly set these to false to prevent caching issues
+  generateBuildId: async () => {
+    return `build-${Date.now()}`;
+  },
+  onDemandEntries: {
+    // Disable page caching
+    maxInactiveAge: 0,
+    pagesBufferLength: 0,
+  }
 };
 
 export default nextConfig;

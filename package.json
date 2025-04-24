@@ -4,11 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
+    "prebuild": "node cleanup.js",
     "build": "next build",
+    "postbuild": "node cleanup.js",
     "start": "next start",
     "lint": "next lint",
-    "prebuild": "node -e \"const fs=require('fs');try{fs.rmSync('.next/cache',{recursive:true,force:true});console.log('Cache cleaned')}catch(e){console.log('No cache to clean')}\"",
-    "cf:build": "npm run prebuild && next build",
+    "cf:build": "node cloudflare-build.js",
     "cf:deploy": "wrangler pages deploy dist"
   },
   "dependencies": {

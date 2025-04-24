@@ -1,0 +1,46 @@
+name: Deploy to Cloudflare Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloudflare Pages
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20.19.0
+          cache: 'npm'
+          
+      - name: Install dependencies
+        run: npm ci
+        
+      - name: Build
+        run: |
+          # Clean any existing cache
+          rm -rf .next/cache dist/cache || true
+          
+          # Build the project with our custom script
+          node cloudflare-build.js
+          
+          # Verify no large files exist in output
+          find dist -type f -size +20M | while read file; do
+            echo "Removing large file: $file"
+            rm "$file"
+          done
+          
+      - name: Deploy to Cloudflare Pages
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: moobi-studio
+          directory: dist
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }} 

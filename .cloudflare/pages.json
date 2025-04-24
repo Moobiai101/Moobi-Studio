@@ -1,0 +1,20 @@
+{
+  "build": {
+    "command": "npm run cf:build",
+    "output_directory": "dist",
+    "environment": {
+      "NODE_ENV": "production",
+      "NEXT_TELEMETRY_DISABLED": "1"
+    }
+  },
+  "headers": {
+    "/*": {
+      "X-Frame-Options": "DENY",
+      "X-XSS-Protection": "1; mode=block"
+    }
+  },
+  "preserve_output": {
+    "directories": ["dist"],
+    "exclude": ["**/*.pack", "**/.git/**", "**/.next/cache/**", "**/node_modules/**"]
+  }
+} 
