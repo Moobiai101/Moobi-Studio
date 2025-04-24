@@ -4,7 +4,19 @@ compatibility_date = "2024-04-24"
 # Specify the output directory for Pages - required property
 pages_build_output_dir = "dist"
 
-# Disable caching to prevent large files
+# Build configuration
+[build]
+command = "npm run cf:build"
+
+# Build environment variables - Ensure Supabase keys are available at build time
+[build.environment]
+NEXT_PUBLIC_SUPABASE_URL = "${env:NEXT_PUBLIC_SUPABASE_URL}"
+NEXT_PUBLIC_SUPABASE_ANON_KEY = "${env:NEXT_PUBLIC_SUPABASE_ANON_KEY}"
+NODE_ENV = "production"
+NEXT_TELEMETRY_DISABLED = "1"
+NODE_OPTIONS = "--max-old-space-size=2048" # Limit memory during build
+
+# Runtime environment variables (already defined)
 [env.production]
 NODE_ENV = "production"
 NEXT_TELEMETRY_DISABLED = "1"
