@@ -1,0 +1,34 @@
+# Configure Cloudflare Pages build options
+[build]
+  command = "npm run build"
+  publish = "dist"
+  
+[build.environment]
+  # This setting will prevent build cache generation that's causing the large file issue
+  NODE_ENV = "production"
+  NEXT_TELEMETRY_DISABLED = "1"
+
+# Clean up large files before deploy
+[build.processing]
+  skip_processing = false
+
+[build.processing.css]
+  bundle = true
+  minify = true
+
+[build.processing.js]
+  bundle = true
+  minify = true
+
+[build.processing.html]
+  pretty_urls = true
+
+[build.processing.images]
+  compress = true
+
+# Configure custom headers
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block" 

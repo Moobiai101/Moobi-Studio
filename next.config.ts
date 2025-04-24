@@ -29,6 +29,21 @@ const nextConfig: NextConfig = {
   },
   // Configure which output files to include/exclude in the deployment
   distDir: 'dist',
+  // Clean webpack output and avoid caching
+  webpack: (config, { dev, isServer }) => {
+    // Clean webpack output
+    if (!dev && !isServer) {
+      config.optimization = {
+        ...config.optimization,
+        minimize: true,
+        splitChunks: {
+          chunks: 'all',
+          maxSize: 20000000, // 20MB max chunks
+        }
+      };
+    }
+    return config;
+  },
 };
 
 export default nextConfig;

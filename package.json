@@ -6,7 +6,10 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "prebuild": "node -e \"const fs=require('fs');try{fs.rmSync('.next/cache',{recursive:true,force:true});console.log('Cache cleaned')}catch(e){console.log('No cache to clean')}\"",
+    "cf:build": "npm run prebuild && next build",
+    "cf:deploy": "wrangler pages deploy dist"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.7",
