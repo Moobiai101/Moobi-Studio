@@ -9,7 +9,7 @@ pages_build_output_dir = "dist"
 NODE_ENV = "production"
 NEXT_TELEMETRY_DISABLED = "1"
 
-# R2 asset binding for images/videos
-[[r2_buckets]]
+# R2 asset binding for images/videos - Should be under env.production
+[[env.production.r2_buckets]]
 binding = "R2_ASSETS"
-bucket_name = "pub-fa2dabd7eff54614b1563a0863fb7cbc" 
+bucket_name = "cdn-images" 

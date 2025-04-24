@@ -52,11 +52,11 @@ process.env.NODE_OPTIONS = '--max-old-space-size=2048'; // Limit memory to preve
 process.env.NEXT_TELEMETRY_DISABLED = '1';
 process.env.NODE_ENV = 'production';
 
-// Step 3: Run Next.js build with webpack disabled caching
+// Step 3: Run Next.js build with cache management
 try {
   // Set options to specifically disable webpack caching
   // These flags should prevent large cache files
-  runCommand('next build --no-cache');
+  runCommand('next build');
 } catch (error) {
   console.error('Build failed:', error);
   process.exit(1);
