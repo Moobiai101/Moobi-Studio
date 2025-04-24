@@ -4,9 +4,17 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Camera, Video, ImagePlus, Headphones, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardTitle } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
+import Image from "next/image";
+import { gsap } from "gsap";
+import { ScrollTrigger } from "gsap/dist/ScrollTrigger";
+
+// Register ScrollTrigger plugin
+if (typeof window !== 'undefined') {
+  gsap.registerPlugin(ScrollTrigger);
+}
 
 const features = [
   {
@@ -237,11 +245,12 @@ export default function Home() {
                       {item.type === 'image' ? (
                         // Removed explicit aspect ratio class from container
                         <div className="bg-muted"> 
-                          <img 
+                          <Image 
                             src={item.src} 
                             alt={item.alt}
-                            loading="lazy"
-                            className="object-cover w-full h-full group-hover:scale-105 transition-transform duration-300"
+                            width={500}
+                            height={500}
+                            className="w-full h-auto group-hover:scale-105 transition-transform duration-300"
                           />
                         </div>
                       ) : (

@@ -34,8 +34,6 @@ import Link from 'next/link';
 // Define aspect ratios for images
 const imageAspectRatios = ["1:1", "16:9", "9:16", "4:3", "3:4"];
 
-// Placeholder for trained models - ** This is now replaced by dynamic fetching **
-// const trainedModels = ["Standard", "Photorealistic", "Artistic", "Character Model A", "Style Model B"];
 
 // Define a type for generated image items (matching worker response)
 interface GeneratedImage {
