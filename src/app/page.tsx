@@ -16,8 +16,8 @@ if (typeof window !== 'undefined') {
   gsap.registerPlugin(ScrollTrigger);
 }
 
-// Use Cloudflare R2 for assets (domain to be updated with your actual R2 domain)
-const R2_BASE_URL = "https://pub-fa2dabd7eff54614b1563a0863fb7cbc.r2.dev";
+// Use Cloudflare R2 for assets via the custom domain
+const R2_BASE_URL = "https://cdn.moobilabs.com";
 
 const features = [
   {
