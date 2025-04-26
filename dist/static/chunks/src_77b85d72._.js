@@ -155,8 +155,8 @@ var _s = __turbopack_context__.k.signature();
 if ("TURBOPACK compile-time truthy", 1) {
     __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$gsap$2f$index$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__$3c$locals$3e$__["gsap"].registerPlugin(__TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$gsap$2f$dist$2f$ScrollTrigger$2e$js__$5b$app$2d$client$5d$__$28$ecmascript$29$__["ScrollTrigger"]);
 }
-// Use Cloudflare R2 for assets (domain to be updated with your actual R2 domain)
-const R2_BASE_URL = "https://pub-fa2dabd7eff54614b1563a0863fb7cbc.r2.dev";
+// Use Cloudflare R2 for assets via the custom domain
+const R2_BASE_URL = "https://cdn.moobilabs.com";
 const features = [
     {
         title: 'Video Studio',

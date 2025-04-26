@@ -134,8 +134,8 @@ var __TURBOPACK__imported__module__$5b$project$5d2f$node_modules$2f$next$2f$imag
 if ("TURBOPACK compile-time falsy", 0) {
     "TURBOPACK unreachable";
 }
-// Use Cloudflare R2 for assets (domain to be updated with your actual R2 domain)
-const R2_BASE_URL = "https://pub-fa2dabd7eff54614b1563a0863fb7cbc.r2.dev";
+// Use Cloudflare R2 for assets via the custom domain
+const R2_BASE_URL = "https://cdn.moobilabs.com";
 const features = [
     {
         title: 'Video Studio',

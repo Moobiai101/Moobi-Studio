@@ -21,8 +21,28 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "AI Creative Suite",
-  description: "AI-powered creative tools for video, image, and audio generation",
+  title: "Moobi Studio",
+  description: "Unlock AI-powered creativity with Moobi Studio! Your all-in-one suite for stunning AI video generation, advanced image editing with object removal & enhancement, and seamless audio creation. Generate VFX, CGI elements, and more. Perfect for digital content creators seeking faster, impactful results.",
+  openGraph: {
+    title: "Moobi Studio - AI Creative Suite for Video, Image & Audio",
+    description: "Effortlessly generate & edit AI video, images (including VFX/CGI), and audio with Moobi Studio. Powerful tools for digital content creators.",
+    type: "website",
+    url: "https://moobilabs.com/",
+    images: [
+      {
+        url: "/moobi-logo.png",
+        width: 1024,
+        height: 1024,
+        alt: "Moobi Studio Logo",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Moobi Studio - AI Creative Suite",
+    description: "Generate & edit stunning AI video, images (VFX/CGI), and audio effortlessly with Moobi Studio's creative suite.",
+    images: ["/moobi-logo.png"],
+  },
 };
 
 export default function RootLayout({

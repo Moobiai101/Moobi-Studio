@@ -7,6 +7,62 @@ import { ThemeSupa } from '@supabase/auth-ui-shared'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 
+// Define custom theme colors based on Moobi Studio palette
+const customTheme = {
+  default: {
+    colors: {
+      brand: 'hsl(var(--primary))', // Use the primary CSS variable from shadcn/tailwind
+      brandAccent: 'hsl(var(--primary) / 0.8)', // Slightly transparent primary for accent
+      brandButtonText: 'hsl(var(--primary-foreground))', // Use the foreground CSS variable
+      defaultButtonBackground: 'hsl(var(--muted))', // Use muted for secondary buttons
+      defaultButtonBackgroundHover: 'hsl(var(--muted) / 0.8)',
+      defaultButtonBorder: 'hsl(var(--muted-foreground))',
+      defaultButtonText: 'hsl(var(--muted-foreground))',
+      dividerBackground: 'hsl(var(--border))',
+      inputBackground: 'hsl(var(--input))',
+      inputBorder: 'hsl(var(--input))',
+      inputBorderHover: 'hsl(var(--ring))',
+      inputBorderFocus: 'hsl(var(--ring))',
+      inputText: 'hsl(var(--foreground))',
+      inputLabelText: 'hsl(var(--muted-foreground))',
+      inputPlaceholder: 'hsl(var(--muted-foreground) / 0.7)',
+      messageText: 'hsl(var(--foreground))',
+      messageTextDanger: 'hsl(var(--destructive))',
+      anchorTextColor: 'hsl(var(--primary))',
+      anchorTextHoverColor: 'hsl(var(--primary) / 0.8)',
+    },
+    space: {
+      spaceSmall: '4px',
+      spaceMedium: '8px',
+      spaceLarge: '16px',
+      labelBottomMargin: '8px',
+      anchorBottomMargin: '4px',
+      emailInputSpacing: '4px',
+      socialAuthSpacing: '8px',
+      buttonPadding: '10px 15px',
+      inputPadding: '10px 12px',
+    },
+    fontSizes: {
+      baseBodySize: '14px',
+      baseInputSize: '14px',
+      baseLabelSize: '14px',
+      baseButtonSize: '14px',
+    },
+    fonts: {
+      bodyFontFamily: 'var(--font-manrope)', // Match layout font
+      buttonFontFamily: 'var(--font-manrope)',
+      inputFontFamily: 'var(--font-manrope)',
+      labelFontFamily: 'var(--font-manrope)',
+    },
+    // Match shadcn/ui border radius
+    radii: {
+      borderRadiusButton: 'var(--radius)',
+      buttonBorderRadius: 'var(--radius)',
+      inputBorderRadius: 'var(--radius)',
+    },
+  },
+};
+
 export default function AuthForm() {
   const supabase = createClient()
   const router = useRouter()
@@ -40,12 +96,15 @@ export default function AuthForm() {
         <CardContent>
           <Auth
             supabaseClient={supabase}
-            appearance={{ theme: ThemeSupa, variables: { default: { colors: { brand: 'hsl(var(--primary))' } } } }}
+            appearance={{
+              theme: ThemeSupa,
+              variables: customTheme,
+            }}
             theme="dark"
-            providers={['google']} // Add other providers like GitHub if configured
-            redirectTo="/" // Redirect to home after successful login/signup
+            providers={['google']}
+            redirectTo="/"
             showLinks={true}
-            onlyThirdPartyProviders={false} // Show email/password too
+            onlyThirdPartyProviders={false}
           />
         </CardContent>
       </Card>
