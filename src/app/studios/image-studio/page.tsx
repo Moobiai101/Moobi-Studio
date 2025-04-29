@@ -70,6 +70,7 @@ export default function ImageStudio() {
   const [isGalleryLoading, setIsGalleryLoading] = useState(true);
   const [galleryError, setGalleryError] = useState<string | null>(null);
   const [showLoginPrompt, setShowLoginPrompt] = useState(false);
+  const [isEnhancing, setIsEnhancing] = useState(false); // <-- State for enhancement loading
 
   // --- State for Custom Models ---
   const [customModels, setCustomModels] = useState<CustomModel[]>([]);
@@ -469,6 +470,57 @@ export default function ImageStudio() {
     // Future enhancement: Use Web Share API if available navigator.share(...)
   };
 
+  // --- NEW: Handle Prompt Enhancement ---
+  const handleEnhancePrompt = async () => {
+    setIsEnhancing(true);
+    const token = await getSessionToken();
+
+    if (!token) {
+      setIsEnhancing(false);
+      router.push('/auth?mode=login&reason=enhance'); // Redirect to login if not authenticated
+      return;
+    }
+
+    if (!prompt.trim()) {
+        toast.info("Please enter a prompt to enhance.");
+        setIsEnhancing(false);
+        return;
+    }
+
+    toast.info("Enhancing prompt...");
+
+    try {
+      const response = await fetch(`${WORKER_API_URL}/api/enhance-prompt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ prompt }),
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.message || `HTTP error! status: ${response.status}`);
+      }
+
+      if (result.enhancedPrompt) {
+        setPrompt(result.enhancedPrompt); // Update the prompt state
+        toast.success("Prompt enhanced!");
+      } else {
+        throw new Error("Enhanced prompt not received from server.");
+      }
+
+    } catch (error: any) {
+      console.error("Prompt enhancement failed:", error);
+      toast.error(error.message || "Failed to enhance prompt.");
+    } finally {
+      setIsEnhancing(false);
+    }
+  };
+  // --- END NEW: Handle Prompt Enhancement ---
+
   // --- Render Logic ---
   return (
     <div className="container mx-auto max-w-6xl py-8 flex-1 flex flex-col">
@@ -503,8 +555,21 @@ export default function ImageStudio() {
               className="resize-none border-none bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 p-3 pr-20 text-base placeholder:text-muted-foreground/60 shadow-none"
               disabled={isLoading}
             />
-            <div className="absolute bottom-3 right-3">
-              <Button size="sm" className="gap-1.5" onClick={handleSubmit} disabled={!prompt.trim() || isLoading}>
+            <div className="absolute bottom-3 right-3 flex items-center gap-2">
+              {/* Enhance Button */}
+              <Button
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={handleEnhancePrompt}
+                  disabled={!prompt.trim() || isLoading || isEnhancing}
+                  title="Enhance Prompt with AI"
+              >
+                {isEnhancing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />}
+                {isEnhancing ? 'Enhancing...' : 'Enhance'}
+              </Button>
+              {/* Generate Button */}
+              <Button size="sm" className="gap-1.5" onClick={handleSubmit} disabled={!prompt.trim() || isLoading || isEnhancing}>
                 {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                 {isLoading ? 'Generating...' : 'Generate'}
               </Button>
