@@ -470,14 +470,14 @@ export default function ImageStudio() {
     // Future enhancement: Use Web Share API if available navigator.share(...)
   };
 
-  // --- NEW: Handle Prompt Enhancement ---
+  // --- Updated: Handle Prompt Enhancement ---
   const handleEnhancePrompt = async () => {
     setIsEnhancing(true);
     const token = await getSessionToken();
 
     if (!token) {
       setIsEnhancing(false);
-      router.push('/auth?mode=login&reason=enhance'); // Redirect to login if not authenticated
+      router.push('/auth?mode=login&reason=enhance');
       return;
     }
 
@@ -490,36 +490,50 @@ export default function ImageStudio() {
     toast.info("Enhancing prompt...");
 
     try {
+      // --- Send modelIdentifier along with prompt --- //
+      const payload = {
+          prompt,
+          modelIdentifier: selectedModelIdentifier
+      };
+      console.log("Sending enhancement request with payload:", payload);
+
       const response = await fetch(`${WORKER_API_URL}/api/enhance-prompt`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify(payload), // Send payload
       });
 
       const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result.message || `HTTP error! status: ${response.status}`);
-      }
-
-      if (result.enhancedPrompt) {
-        setPrompt(result.enhancedPrompt); // Update the prompt state
+        // Use enhancedPrompt as fallback if message missing but prompt exists (backend sends original on error)
+        if (result.enhancedPrompt) {
+            setPrompt(result.enhancedPrompt);
+            toast.error(result.message || "Enhancement failed, using original prompt.");
+        } else {
+            throw new Error(result.message || `HTTP error! status: ${response.status}`);
+        }
+      } else if (result.enhancedPrompt) {
+        setPrompt(result.enhancedPrompt);
         toast.success("Prompt enhanced!");
       } else {
+        // Even on success, if prompt is missing, treat as error but use original
+        setPrompt(prompt); // Keep original prompt
         throw new Error("Enhanced prompt not received from server.");
       }
 
     } catch (error: any) {
       console.error("Prompt enhancement failed:", error);
+      // Don't reset prompt here, backend should send original as fallback
       toast.error(error.message || "Failed to enhance prompt.");
     } finally {
       setIsEnhancing(false);
     }
   };
-  // --- END NEW: Handle Prompt Enhancement ---
+  // --- END Updated: Handle Prompt Enhancement ---
 
   // --- Render Logic ---
   return (
@@ -539,23 +553,28 @@ export default function ImageStudio() {
         </div>
 
         <div className="w-full max-w-2xl space-y-4 mb-12">
-          <div 
+          {/* Container for Textarea with Border */}
+          <div
             className={cn(
               "relative rounded-lg border border-input bg-card p-1 focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/30 transition-all",
               isFocused && "border-primary ring-2 ring-primary/30 shadow-lg shadow-primary/10"
+              // Removed button container from here
             )}
           >
-            <Textarea 
+            <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
               placeholder="Describe the image you want to generate...or train your own model!"
               rows={3}
-              className="resize-none border-none bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 p-3 pr-20 text-base placeholder:text-muted-foreground/60 shadow-none"
-              disabled={isLoading}
+              className="resize-none border-none bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 p-3 text-base placeholder:text-muted-foreground/60 shadow-none w-full"
+              disabled={isLoading || isEnhancing}
             />
-            <div className="absolute bottom-3 right-3 flex items-center gap-2">
+          </div>
+
+          {/* --- Button Container - Moved outside the bordered div --- */}
+          <div className="flex justify-end items-center gap-2 w-full max-w-2xl">
               {/* Enhance Button */}
               <Button
                   variant="outline"
@@ -573,11 +592,11 @@ export default function ImageStudio() {
                 {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
                 {isLoading ? 'Generating...' : 'Generate'}
               </Button>
-            </div>
           </div>
-          
+
+          {/* Dropdowns moved below buttons */}
           <div className="flex flex-wrap items-center gap-2">
-            {/* --- Updated Model Dropdown --- */}
+            {/* Model Dropdown */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" className="gap-1.5" disabled={isLoading || isTrainingSubmitting || isModelsLoading}>
@@ -619,7 +638,7 @@ export default function ImageStudio() {
               </DropdownMenuContent>
             </DropdownMenu>
 
-            {/* --- Training Modal Dialog (ensure form uses correct state) --- */}
+            {/* Training Modal Dialog */}
             <Dialog open={isTrainingModalOpen} onOpenChange={setIsTrainingModalOpen}>
               <DialogTrigger asChild>
                  <Button variant="outline" size="sm" className="gap-1.5" disabled={isLoading || isTrainingSubmitting}>
@@ -751,8 +770,8 @@ export default function ImageStudio() {
               </DialogContent>
             </Dialog>
 
-            {/* --- Aspect Ratio Button (remains the same) --- */}
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleAspectRatioChange} disabled={isLoading || isTrainingSubmitting}>
+            {/* Aspect Ratio Button */}
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={handleAspectRatioChange} disabled={isLoading || isTrainingSubmitting || isEnhancing}>
               <RectangleHorizontal className="h-4 w-4" />
               {currentAspectRatio}
             </Button>
