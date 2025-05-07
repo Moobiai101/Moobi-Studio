@@ -49,7 +49,7 @@ export default function ImageEditing() {
 
   // --- State ---
   const [originalImage, setOriginalImage] = useState<{ file?: File; url?: string; id?: string; r2_key?: string } | null>(null);
-  const [editedImageUrl, setEditedImageUrl] = useState<string | null>(null);
+  const [editedImage, setEditedImage] = useState<{ url: string; contentType: string; falRequestId?: string } | null>(null);
   const [editPrompt, setEditPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [isCommitting, setIsCommitting] = useState(false); // For "Save to Assets" loading state
@@ -118,7 +118,7 @@ export default function ImageEditing() {
       const reader = new FileReader();
       reader.onloadend = () => {
         setOriginalImage({ file: file, url: reader.result as string });
-        setEditedImageUrl(null); // Reset edited image on new upload
+        setEditedImage(null); // Reset edited image on new upload
       };
       reader.readAsDataURL(file);
     }
@@ -130,13 +130,13 @@ export default function ImageEditing() {
 
   const handleGallerySelect = (image: GeneratedImage) => {
      setOriginalImage({ url: image.displayUrl, id: image.id, r2_key: image.r2_object_key });
-     setEditedImageUrl(null); // Reset edited image
+     setEditedImage(null); // Reset edited image
      setIsGalleryModalOpen(false); // Close modal
   };
 
   const handleRemoveImage = () => {
     setOriginalImage(null);
-    setEditedImageUrl(null);
+    setEditedImage(null);
     if (fileInputRef.current) {
         fileInputRef.current.value = ''; // Clear the file input
     }
@@ -155,7 +155,7 @@ export default function ImageEditing() {
     }
 
     setIsLoading(true);
-    setEditedImageUrl(null); // Clear previous edit
+    setEditedImage(null); // Clear previous edit
     toast.info("Starting image edit...");
     const token = await getSessionToken();
 
@@ -201,19 +201,22 @@ export default function ImageEditing() {
       }
 
       // --- Expect new response structure ---
-      if (!result.success || !result.editedImage || !result.editedImage.temporaryUrl) {
-          throw new Error("Editing process completed, but no valid image URL received.");
+      if (!result.success || !result.editedImage || !result.editedImage.temporaryUrl || !result.editedImage.contentType) {
+          throw new Error("Editing process completed, but no valid image URL or content type received.");
       }
 
       console.log("Edit successful, Fal temporary result:", result);
-      setEditedImageUrl(result.editedImage.temporaryUrl); // Set the new temporary image URL
-      // Store content type if needed for commit, or backend can re-check
+      setEditedImage({ 
+        url: result.editedImage.temporaryUrl,
+        contentType: result.editedImage.contentType,
+        falRequestId: result.editedImage.falRequestId
+      }); 
       toast.success("Preview generated! You can now save it to your assets.");
 
     } catch (error: any) {
       console.error("Image editing failed:", error);
       toast.error(`Editing failed: ${error.message || "An unknown error occurred."}`);
-      setEditedImageUrl(null); // Ensure edited image is cleared on error
+      setEditedImage(null); // Ensure edited image is cleared on error
     } finally {
       setIsLoading(false);
     }
@@ -222,12 +225,12 @@ export default function ImageEditing() {
 
   // --- Handle Commit to Assets (Placeholder for now) ---
   const handleCommitToAssets = async () => {
-    if (!editedImageUrl) {
+    if (!editedImage || !editedImage.url) {
       toast.error("No edited image to save.");
       return;
     }
     if (!originalImage) {
-        toast.error("Original image context is missing.");
+        toast.error("Original image context is missing for lineage."); // Clarified error
         return;
     }
 
@@ -243,39 +246,44 @@ export default function ImageEditing() {
     }
 
     const payload = {
-        imageTemporaryUrl: editedImageUrl, // The temporary Fal URL
-        originalPrompt: editPrompt, // The prompt that created this version
-        sourceR2Key: originalImage.r2_key, // R2 key of the very first image in the chain (if from gallery)
-        sourceImageFileUrl: !originalImage.r2_key && originalImage.url ? originalImage.url : undefined, // data URL of uploaded file if not from gallery
-                                                                                                  // Backend will use this to decide if original was new upload or gallery item
+        imageTemporaryUrl: editedImage.url, 
+        originalPrompt: editPrompt.trim(), 
+        contentType: editedImage.contentType,
+        sourceStudio: 'image_editor',
+        sourceGeneratedContentId: originalImage.id || null, // id from generated_content if it was a gallery selection
+        // userDefinedTitle: null, // Future: get from UI input
+        // userDefinedDescription: null, // Future: get from UI input
+        // userDefinedTags: [], // Future: get from UI input
+        generationMetadata: editedImage.falRequestId ? { falRequestId: editedImage.falRequestId } : null,
+        model_used: 'fal-ai/hidream-e1-full' // Add model used
     };
 
     try {
-        console.log("Calling /api/commit-asset with payload:", payload);
-        // const response = await fetch(`${WORKER_API_URL}/api/commit-asset`, {
-        //     method: 'POST',
-        //     headers: {
-        //         'Content-Type': 'application/json',
-        //         'Authorization': `Bearer ${token}`,
-        //     },
-        //     body: JSON.stringify(payload),
-        // });
+        console.log("Calling /api/commit-asset with payload:", JSON.stringify(payload));
+        const response = await fetch(`${WORKER_API_URL}/api/commit-asset`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+            },
+            body: JSON.stringify(payload),
+        });
 
-        // const commitResult = await response.json();
+        const commitResult = await response.json();
 
-        // if (!response.ok) {
-        //     throw new Error(commitResult.message || `HTTP error! status: ${response.status}`);
-        // }
+        if (!response.ok) {
+            throw new Error(commitResult.message || `HTTP error! status: ${response.status}`);
+        }
+        
+        if (!commitResult.success || !commitResult.asset || !commitResult.asset.displayUrl) {
+            throw new Error("Asset saving reported success but did not return valid asset data.");
+        }
 
-        // toast.success("Image saved to your assets successfully!");
-        // setEditedImageUrl(commitResult.asset.displayUrl); // Update to permanent URL if backend provides it
-        // Optionally, redirect to assets page or clear the editor
-
-        // --- Placeholder Response --- 
-        await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate API call
-        console.log("Placeholder: /api/commit-asset would be called here.");
-        toast.success("Placeholder: Image saved to your assets! (Backend not implemented yet)");
-        // --- End Placeholder Response ---
+        toast.success(commitResult.message || "Image saved to your assets successfully!");
+        // Update the displayed image to the new permanent URL
+        setEditedImage(prev => prev ? { ...prev, url: commitResult.asset.displayUrl } : null);
+        // Optionally, clear the prompt or indicate that it's saved.
+        // Consider disabling "Save to Assets" again until a new edit is made.
 
     } catch (error: any) {
         console.error("Failed to save asset:", error);
@@ -513,7 +521,7 @@ export default function ImageEditing() {
             <Card className="shadow-sm flex flex-col">
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-lg">Edited Image</CardTitle>
-                {editedImageUrl && !isLoading && (
+                {editedImage?.url && !isLoading && (
                     <Button 
                         size="sm" 
                         className="gap-1.5"
@@ -532,10 +540,10 @@ export default function ImageEditing() {
                     <p>Editing in progress...</p>
                   </div>
                 )}
-                {!isLoading && editedImageUrl && (
+                {!isLoading && editedImage?.url && (
                    <div className="relative w-full h-full max-h-[60vh]">
                       <Image
-                        src={editedImageUrl}
+                        src={editedImage.url}
                         alt="Edited image"
                         fill
                         className="object-contain"
@@ -543,13 +551,13 @@ export default function ImageEditing() {
                       />
                    </div>
                 )}
-                {!isLoading && !editedImageUrl && originalImage && (
+                {!isLoading && !editedImage?.url && originalImage && (
                     <div className="flex flex-col items-center text-muted-foreground text-center p-8">
                         <Wand2 className="h-16 w-16 mb-4" />
                         <p>Enter instructions and click 'Apply Edit' to see the result here.</p>
                     </div>
                 )}
-                 {!isLoading && !editedImageUrl && !originalImage && (
+                 {!isLoading && !editedImage?.url && !originalImage && (
                     <div className="flex flex-col items-center text-muted-foreground text-center p-8 opacity-50">
                         <ImageIcon className="h-16 w-16 mb-4" />
                         <p>The edited image will appear here.</p>
