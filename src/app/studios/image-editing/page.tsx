@@ -25,7 +25,7 @@ import {
   DialogClose,
 } from "@/components/ui/dialog";
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Edit3, UploadCloud, Image as ImageIcon, Loader2, Sparkles, Wand2, X } from "lucide-react";
+import { Edit3, UploadCloud, Image as ImageIcon, Loader2, Sparkles, Wand2, X, DownloadCloud } from "lucide-react";
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
 import { toast } from "sonner";
@@ -52,6 +52,7 @@ export default function ImageEditing() {
   const [editedImageUrl, setEditedImageUrl] = useState<string | null>(null);
   const [editPrompt, setEditPrompt] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isCommitting, setIsCommitting] = useState(false); // For "Save to Assets" loading state
   const [isGalleryLoading, setIsGalleryLoading] = useState(false); // For gallery modal
   const [galleryError, setGalleryError] = useState<string | null>(null);
   const [galleryImages, setGalleryImages] = useState<GeneratedImage[]>([]);
@@ -199,13 +200,15 @@ export default function ImageEditing() {
         throw new Error(result.message || `HTTP error! status: ${response.status}`);
       }
 
-      if (!result.editedImage || !result.editedImage.displayUrl) {
-          throw new Error("Editing completed, but no valid image URL received.");
+      // --- Expect new response structure ---
+      if (!result.success || !result.editedImage || !result.editedImage.temporaryUrl) {
+          throw new Error("Editing process completed, but no valid image URL received.");
       }
 
-      console.log("Edit successful, result:", result);
-      setEditedImageUrl(result.editedImage.displayUrl); // Set the new image URL
-      toast.success("Image edited successfully!");
+      console.log("Edit successful, Fal temporary result:", result);
+      setEditedImageUrl(result.editedImage.temporaryUrl); // Set the new temporary image URL
+      // Store content type if needed for commit, or backend can re-check
+      toast.success("Preview generated! You can now save it to your assets.");
 
     } catch (error: any) {
       console.error("Image editing failed:", error);
@@ -216,6 +219,72 @@ export default function ImageEditing() {
     }
   };
   // --- End Submit Edit Request ---
+
+  // --- Handle Commit to Assets (Placeholder for now) ---
+  const handleCommitToAssets = async () => {
+    if (!editedImageUrl) {
+      toast.error("No edited image to save.");
+      return;
+    }
+    if (!originalImage) {
+        toast.error("Original image context is missing.");
+        return;
+    }
+
+    setIsCommitting(true);
+    toast.info("Saving to your assets...");
+
+    const token = await getSessionToken();
+    if (!token) {
+      setIsCommitting(false);
+      toast.error("Authentication required to save assets.");
+      router.push('/auth?mode=login&reason=save_asset');
+      return;
+    }
+
+    const payload = {
+        imageTemporaryUrl: editedImageUrl, // The temporary Fal URL
+        originalPrompt: editPrompt, // The prompt that created this version
+        sourceR2Key: originalImage.r2_key, // R2 key of the very first image in the chain (if from gallery)
+        sourceImageFileUrl: !originalImage.r2_key && originalImage.url ? originalImage.url : undefined, // data URL of uploaded file if not from gallery
+                                                                                                  // Backend will use this to decide if original was new upload or gallery item
+    };
+
+    try {
+        console.log("Calling /api/commit-asset with payload:", payload);
+        // const response = await fetch(`${WORKER_API_URL}/api/commit-asset`, {
+        //     method: 'POST',
+        //     headers: {
+        //         'Content-Type': 'application/json',
+        //         'Authorization': `Bearer ${token}`,
+        //     },
+        //     body: JSON.stringify(payload),
+        // });
+
+        // const commitResult = await response.json();
+
+        // if (!response.ok) {
+        //     throw new Error(commitResult.message || `HTTP error! status: ${response.status}`);
+        // }
+
+        // toast.success("Image saved to your assets successfully!");
+        // setEditedImageUrl(commitResult.asset.displayUrl); // Update to permanent URL if backend provides it
+        // Optionally, redirect to assets page or clear the editor
+
+        // --- Placeholder Response --- 
+        await new Promise(resolve => setTimeout(resolve, 1500)); // Simulate API call
+        console.log("Placeholder: /api/commit-asset would be called here.");
+        toast.success("Placeholder: Image saved to your assets! (Backend not implemented yet)");
+        // --- End Placeholder Response ---
+
+    } catch (error: any) {
+        console.error("Failed to save asset:", error);
+        toast.error(`Failed to save to assets: ${error.message}`);
+    } finally {
+        setIsCommitting(false);
+    }
+  };
+  // --- End Handle Commit to Assets ---
 
   // Fetch gallery when modal is triggered to open
   useEffect(() => {
@@ -401,7 +470,7 @@ export default function ImageEditing() {
                    />
                    <Button
                       type="submit"
-                      disabled={isLoading || !originalImage || !editPrompt.trim()}
+                      disabled={isLoading || !originalImage || !editPrompt.trim() || isCommitting}
                       className="w-full gap-2"
                    >
                      {isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
@@ -442,8 +511,19 @@ export default function ImageEditing() {
 
             {/* Edited Image Display */}
             <Card className="shadow-sm flex flex-col">
-              <CardHeader>
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-lg">Edited Image</CardTitle>
+                {editedImageUrl && !isLoading && (
+                    <Button 
+                        size="sm" 
+                        className="gap-1.5"
+                        onClick={handleCommitToAssets}
+                        disabled={isCommitting || isLoading}
+                    >
+                        {isCommitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <DownloadCloud className="h-4 w-4" />}
+                        {isCommitting ? 'Saving...' : 'Save to Assets'}
+                    </Button>
+                )}
               </CardHeader>
               <CardContent className="flex-1 flex items-center justify-center bg-muted/50 rounded-b-md overflow-hidden p-4">
                 {isLoading && (
