@@ -454,20 +454,73 @@ export default function ImageStudio() {
 
   // --- Handle Share (Basic: Copy Link) ---
   const handleShare = (imageUrl: string) => {
-     if (!imageUrl || imageUrl === '#placeholder' || imageUrl === '#error-generating-url') {
-      toast.error("Cannot share image, URL is invalid.");
-      return;
+    try {
+      if (navigator.share) {
+        navigator.share({
+          title: 'Check out my AI-generated image!',
+          text: 'I generated this image using AI Creative Suite.',
+          url: imageUrl,
+        })
+          .then(() => console.log('Successful share'))
+          .catch((error) => console.log('Error sharing', error));
+      } else {
+        navigator.clipboard.writeText(imageUrl)
+          .then(() => toast.success('Image URL copied to clipboard!'))
+          .catch(() => toast.error('Failed to copy URL'));
+      }
+    } catch (error) {
+      console.error('Share failed:', error);
+      toast.error('Unable to share image');
     }
-    // Basic share: Copy image URL to clipboard
-    navigator.clipboard.writeText(imageUrl)
-      .then(() => {
-        toast.success("Image link copied to clipboard!");
-      })
-      .catch(err => {
-        console.error("Failed to copy link:", err);
-        toast.error("Failed to copy image link.");
+  };
+
+  // --- Handle Add To Assets --- 
+  const handleAddToAssets = async (image: GeneratedImage) => {
+    try {
+      const token = await getSessionToken();
+      
+      if (!token) {
+        toast.error('Please login to add images to your assets');
+        return;
+      }
+
+      toast.loading('Adding to your assets collection...');
+      
+      const payload = {
+        imageTemporaryUrl: image.displayUrl,
+        originalPrompt: image.prompt,
+        contentType: 'image/jpeg', // Default to jpeg, could be more specific if available
+        sourceStudio: 'image_studio',
+        sourceGeneratedContentId: image.id,
+        userDefinedTitle: `Generated Image - ${new Date().toLocaleDateString()}`,
+        model_used: image.model || 'Standard'
+      };
+      
+      const response = await fetch(`${WORKER_API_URL}/api/commit-asset`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
       });
-    // Future enhancement: Use Web Share API if available navigator.share(...)
+      
+      const result = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(result.message || 'Failed to add image to assets');
+      }
+      
+      toast.dismiss();
+      toast.success('Image added to your assets!');
+      
+      // Optional: Could show a link to the My Assets page
+      
+    } catch (error: any) {
+      toast.dismiss();
+      console.error('Add to assets failed:', error);
+      toast.error(error.message || 'Failed to add image to assets');
+    }
   };
 
   // --- Updated: Handle Prompt Enhancement ---
@@ -846,6 +899,15 @@ export default function ImageStudio() {
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-3 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between">
                   <p className="text-xs text-white/90 line-clamp-3 mt-auto">{image.prompt || 'No prompt provided'}</p>
                   <div className="absolute top-2 right-2 flex items-center gap-1.5">
+                     <Button 
+                       variant="ghost" 
+                       size="icon" 
+                       className="h-7 w-7 text-white/80 hover:bg-black/30 hover:text-white"
+                       title="Add to Assets"
+                       onClick={(e) => { e.stopPropagation(); handleAddToAssets(image); }}
+                     >
+                       <ImageIcon className="h-4 w-4" />
+                     </Button>
                      <Button 
                        variant="ghost" 
                        size="icon" 
