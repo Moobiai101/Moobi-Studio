@@ -11,7 +11,8 @@ import {
   Sparkles,
   Settings,
   ChevronsLeft,
-  ChevronsRight
+  ChevronsRight,
+  ImageIcon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -20,6 +21,7 @@ const navigationItems = [
   { name: 'Video Studio', href: '/studios/video-studio', icon: Video },
   { name: 'Image Studio', href: '/studios/image-studio', icon: Camera },
   { name: 'Image Editing', href: '/studios/image-editing', icon: ImagePlus },
+  { name: 'My Assets', href: '/studios/my-assets', icon: ImageIcon },
   { name: 'Dubbing Studio', href: '/studios/dubbing-studio', icon: Headphones },
 ];
 
