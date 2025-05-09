@@ -41,6 +41,18 @@ interface GeneratedImage {
   content_type?: string;
 }
 
+// Define stream event types
+interface StreamEvent {
+  type: string;
+  data?: {
+    images?: Array<{ url: string; content_type: string }>;
+    progress?: number;
+    status?: string;
+    log?: string;
+    falRequestId?: string;
+  }
+}
+
 // Define the worker API base URL (same as image studio)
 const WORKER_API_URL = 'https://my-ai-worker.khansameersam96.workers.dev';
 
@@ -59,8 +71,15 @@ export default function ImageEditing() {
   const [galleryImages, setGalleryImages] = useState<GeneratedImage[]>([]);
   const [isGalleryModalOpen, setIsGalleryModalOpen] = useState(false);
   const [showLoginPrompt, setShowLoginPrompt] = useState(false); // If gallery needs auth
+  // New state for streaming
+  const [progressLogs, setProgressLogs] = useState<string[]>([]);
+  const [streamProgress, setStreamProgress] = useState<number>(0);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Reference to abort controller for stream
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // --- Auth Helper ---
   const getSessionToken = async () => {
@@ -146,7 +165,7 @@ export default function ImageEditing() {
     }
   };
 
-  // --- Submit Edit Request (Placeholder) ---
+  // --- Submit Edit Request with Streaming ---
   const handleEditSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!originalImage || (!originalImage.file && !originalImage.r2_key && !originalImage.url && !originalImage.contentType)) {
@@ -158,8 +177,20 @@ export default function ImageEditing() {
       return;
     }
 
+    // Reset streaming state
     setIsLoading(true);
     setEditedImage(null);
+    setProgressLogs([]);
+    setStreamProgress(0);
+    setStreamError(null);
+    setPreviewImageUrl(null);
+    
+    // Create new abort controller
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     toast.info("Starting image edit...");
     const token = await getSessionToken();
 
@@ -173,6 +204,7 @@ export default function ImageEditing() {
     // --- Prepare FormData ---
     const formData = new FormData();
     formData.append('editPrompt', editPrompt.trim());
+    formData.append('streaming', 'true'); // Signal to use streaming mode
 
     // Append original image identifier or the file itself
     if (originalImage.r2_key) {
@@ -189,45 +221,128 @@ export default function ImageEditing() {
        return;
     }
 
-    // --- Call Backend API ---
+    // --- Call Backend API with stream handling ---
     try {
-      console.log("Sending edit request to /api/edit-image");
+      console.log("Sending streaming edit request to /api/edit-image");
+      
       const response = await fetch(`${WORKER_API_URL}/api/edit-image`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
+          'Accept': 'text/event-stream',
         },
         body: formData,
+        signal: abortControllerRef.current.signal
       });
 
-      const result = await response.json();
-
       if (!response.ok) {
-        throw new Error(result.message || `HTTP error! status: ${response.status}`);
+        const errorData = await response.json().catch(() => ({ message: `HTTP error! status: ${response.status}` }));
+        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
       }
 
-      // --- Expect new response structure ---
-      if (!result.success || !result.editedImage || !result.editedImage.temporaryUrl || !result.editedImage.contentType) {
-          throw new Error("Editing process completed, but no valid image URL or content type received.");
+      if (!response.body) {
+        throw new Error("Response body is null. Stream initialization failed.");
       }
 
-      console.log("Edit successful, Fal temporary result:", result);
-      setEditedImage({ 
-        url: result.editedImage.temporaryUrl,
-        contentType: result.editedImage.contentType,
-        falRequestId: result.editedImage.falRequestId
-      }); 
-      toast.success("Preview generated! You can now save it to your assets.");
+      // Set up stream reading
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      // Process stream chunks
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.trim() === '') continue;
+          if (line.startsWith('data:')) {
+            try {
+              const eventData = JSON.parse(line.slice(5)) as StreamEvent;
+              handleStreamEvent(eventData);
+            } catch (parseError) {
+              console.error("Error parsing SSE data:", parseError, "Raw data:", line);
+            }
+          }
+        }
+      }
+
+      console.log("Stream completed");
+      
+      // If we reach here with a previewImageUrl but no edited image yet,
+      // use the last preview as the final result
+      if (previewImageUrl && !editedImage) {
+        setEditedImage({
+          url: previewImageUrl,
+          contentType: 'image/png', // Default since we don't know for sure from stream
+          falRequestId: undefined
+        });
+        toast.success("Preview generated! You can now save it to your assets.");
+      }
 
     } catch (error: any) {
-      console.error("Image editing failed:", error);
-      toast.error(`Editing failed: ${error.message || "An unknown error occurred."}`);
+      if (error.name === 'AbortError') {
+        console.log("Image editing stream aborted by user");
+        toast.info("Image editing cancelled");
+      } else {
+        console.error("Image editing failed:", error);
+        setStreamError(error.message || "An unknown error occurred.");
+        toast.error(`Editing failed: ${error.message || "An unknown error occurred."}`);
+      }
       setEditedImage(null);
     } finally {
       setIsLoading(false);
+      abortControllerRef.current = null;
     }
   };
-  // --- End Submit Edit Request ---
+  
+  // Handle different types of stream events
+  const handleStreamEvent = (event: StreamEvent) => {
+    console.log("Stream event:", event);
+    
+    if (event.type === 'log' && event.data && event.data.log) {
+      // Add log message to progress logs
+      setProgressLogs(prev => [...prev, event.data?.log ?? "Unknown message"]);
+    } 
+    else if (event.type === 'progress' && event.data && event.data.progress !== undefined) {
+      // Update progress percentage
+      setStreamProgress(event.data.progress);
+    } 
+    else if (event.type === 'preview' && event.data && event.data.images && event.data.images[0] && event.data.images[0].url) {
+      // Update preview image
+      setPreviewImageUrl(event.data.images[0].url);
+    } 
+    else if (event.type === 'completed' && event.data && event.data.images && event.data.images[0] && event.data.images[0].url) {
+      // Set final result
+      const contentType = event.data.images[0].content_type || 'image/png';
+      setEditedImage({
+        url: event.data.images[0].url,
+        contentType: contentType,
+        falRequestId: event.data.falRequestId
+      });
+      toast.success("Image editing complete!");
+    } 
+    else if (event.type === 'error') {
+      // Handle error
+      const errorMessage = event.data ? (event.data.log || "An unknown error occurred") : "An unknown error occurred";
+      setStreamError(errorMessage);
+      toast.error(`Editing failed: ${errorMessage}`);
+    }
+  };
+
+  // Cancel edit operation
+  const handleCancelEdit = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setIsLoading(false);
+      toast.info("Editing cancelled");
+    }
+  };
 
   // --- Handle Commit to Assets (Placeholder for now) ---
   const handleCommitToAssets = async () => {
@@ -492,17 +607,63 @@ export default function ImageEditing() {
                      className="resize-none focus-visible:ring-primary/50 bg-gray-700 border-gray-600 placeholder-gray-500 text-gray-200 rounded-md p-3"
                      disabled={isLoading || !originalImage}
                    />
-                   <Button
-                      type="submit"
-                      disabled={isLoading || !originalImage || !editPrompt.trim() || isCommitting}
-                      className="w-full gap-2 py-3 text-lg bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white rounded-md transition-all duration-300 transform hover:scale-105"
-                   >
-                     {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : <Sparkles className="h-6 w-6" />}
-                     {isLoading ? 'Cooking...' : 'Let AI Cook'}
-                   </Button>
+                   <div className="flex gap-2">
+                     <Button
+                        type="submit"
+                        disabled={isLoading || !originalImage || !editPrompt.trim() || isCommitting}
+                        className="flex-1 gap-2 py-3 text-lg bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white rounded-md transition-all duration-300 transform hover:scale-105"
+                     >
+                       {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : <Sparkles className="h-6 w-6" />}
+                       {isLoading ? 'Cooking...' : 'Let AI Cook'}
+                     </Button>
+                     
+                     {isLoading && (
+                       <Button
+                         type="button"
+                         variant="destructive"
+                         onClick={handleCancelEdit}
+                         className="w-auto py-3 text-lg rounded-md transition-all duration-300"
+                       >
+                         <X className="h-6 w-6" />
+                       </Button>
+                     )}
+                   </div>
                </form>
             </CardContent>
           </Card>
+
+          {/* Progress Logs (only shown when loading) */}
+          {isLoading && progressLogs.length > 0 && (
+            <Card className="shadow-xl bg-gray-800 border-gray-700">
+              <CardHeader className="py-3">
+                <CardTitle className="text-md text-gray-200">Processing</CardTitle>
+              </CardHeader>
+              <CardContent className="py-2">
+                <div className="relative pt-1">
+                  <div className="flex mb-2 items-center justify-between">
+                    <div>
+                      <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-primary bg-primary/20">
+                        {Math.round(streamProgress * 100)}%
+                      </span>
+                    </div>
+                  </div>
+                  <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-700/50">
+                    <div 
+                      style={{ width: `${streamProgress * 100}%` }}
+                      className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-primary transition-all duration-300"
+                    ></div>
+                  </div>
+                </div>
+                <ScrollArea className="h-24 w-full text-xs font-mono">
+                  <div className="space-y-1 text-gray-400">
+                    {progressLogs.map((log, i) => (
+                      <p key={i} className="text-wrap break-all">{log}</p>
+                    ))}
+                  </div>
+                </ScrollArea>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Right Panel: Image Display */}
@@ -539,12 +700,35 @@ export default function ImageEditing() {
                 <CardTitle className="text-xl text-gray-200">Edited Image</CardTitle>
               </CardHeader>
               <CardContent className="flex-1 flex items-center justify-center bg-gray-800/30 rounded-b-lg overflow-hidden p-4 min-h-[300px] md:min-h-[400px] relative group">
-                {isLoading && (
+                {isLoading && !previewImageUrl && (
                   <div className="flex flex-col items-center text-gray-400">
                     <Loader2 className="h-16 w-16 animate-spin mb-4 text-primary" />
                     <p className="text-lg">ON IT...</p>
+                    {streamProgress > 0 && (
+                      <p className="text-sm mt-2">{Math.round(streamProgress * 100)}% complete</p>
+                    )}
                   </div>
                 )}
+                
+                {/* Show preview while still processing */}
+                {isLoading && previewImageUrl && (
+                  <div className="relative w-full h-full max-h-[70vh]">
+                    <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/30">
+                      <div className="bg-black/50 px-3 py-1 rounded-full flex items-center">
+                        <Loader2 className="h-4 w-4 animate-spin mr-2 text-primary" />
+                        <span className="text-xs text-white font-medium">Processing...</span>
+                      </div>
+                    </div>
+                    <Image
+                      src={previewImageUrl}
+                      alt="Preview image"
+                      fill
+                      className="object-contain opacity-80"
+                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+                    />
+                  </div>
+                )}
+                
                 {!isLoading && editedImage?.url && (
                    <div className="relative w-full h-full max-h-[70vh]">
                       <Image
@@ -577,13 +761,25 @@ export default function ImageEditing() {
                       </div>
                    </div>
                 )}
-                {!isLoading && !editedImage?.url && originalImage && (
+                
+                {/* Show error message if there was one */}
+                {!isLoading && streamError && !editedImage?.url && (
+                  <div className="flex flex-col items-center text-red-400 text-center p-8">
+                    <div className="bg-red-500/20 p-4 rounded-lg mb-2">
+                      <X className="h-10 w-10 mb-2 mx-auto" />
+                      <p className="text-sm font-medium">Error: {streamError}</p>
+                    </div>
+                    <p className="text-sm text-gray-400 mt-2">Please try again with different instructions.</p>
+                  </div>
+                )}
+                
+                {!isLoading && !streamError && !editedImage?.url && originalImage && (
                     <div className="flex flex-col items-center text-gray-500 text-center p-8">
                         <Wand2 className="h-20 w-20 mb-4 opacity-50" />
                         <p className="text-lg">Enter instructions and click 'Let AI Cook' to see the result.</p>
                     </div>
                 )}
-                 {!isLoading && !editedImage?.url && !originalImage && (
+                 {!isLoading && !streamError && !editedImage?.url && !originalImage && (
                     <div className="flex flex-col items-center text-gray-600 text-center p-8 opacity-70">
                         <ImageIcon className="h-20 w-20 mb-4" />
                         <p className="text-lg">The edited masterpiece will appear here.</p>
