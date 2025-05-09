@@ -289,50 +289,56 @@ export default function MyAssetsPage() {
           {!showLoginPrompt && !isLoading && !error && filteredAssets.length > 0 && (
             <div className="columns-1 sm:columns-2 md:columns-3 lg:columns-4 gap-6">
               {filteredAssets.map((asset) => (
-                <Card key={asset.id} className="overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col break-inside-avoid mb-6">
+                <Card key={asset.id} className="group overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col break-inside-avoid mb-6 cursor-pointer">
                   <CardContent className="p-0 relative">
                     <img
                       src={asset.displayUrl}
                       alt={asset.source_prompt || "Asset image"}
                       className="w-full h-auto object-cover block"
                       onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/300x400?text=Image+Not+Found')}
+                      onClick={() => openDetails(asset)}
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent"></div>
-                     <div className="absolute bottom-0 left-0 right-0 p-3">
-                      <h3 className="font-semibold text-sm text-white truncate" title={asset.source_prompt || "Untitled Asset"}>
-                        {asset.source_prompt || "Untitled Asset"}
-                      </h3>
-                      <p className="text-xs text-gray-300">{formatDate(asset.created_at).split(',')[0]}</p>
+                    <div 
+                      className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent opacity-100 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+                      onClick={() => openDetails(asset)}
+                    >
+                      <div className="absolute bottom-0 left-0 right-0 p-3">
+                        <h3 className="font-semibold text-sm text-white truncate" title={asset.source_prompt || "Untitled Asset"}>
+                          {asset.source_prompt || "Untitled Asset"}
+                        </h3>
+                        <p className="text-xs text-gray-300">{formatDate(asset.created_at).split(',')[0]}</p>
+                      </div>
+                    </div>
+
+                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300 z-10">
+                      <TooltipProvider delayDuration={100}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 bg-black/30 hover:bg-black/50 text-white" onClick={(e) => { e.stopPropagation(); openDetails(asset); }}>
+                              <Info className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>View Details</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 ml-1 bg-black/30 hover:bg-black/50 text-white" onClick={(e) => { e.stopPropagation(); handleDownload(asset); }}>
+                              <Download className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Download</TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8 ml-1 bg-black/30 hover:bg-red-500/70 text-white" onClick={(e) => { e.stopPropagation(); handleDelete(asset); }}>
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     </div>
                   </CardContent>
-                  <CardFooter className="p-2 border-t bg-background">
-                    <TooltipProvider delayDuration={100}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openDetails(asset)}>
-                            <Info className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>View Details</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDownload(asset)}>
-                            <Download className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Download</TooltipContent>
-                      </Tooltip>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive/80" onClick={() => handleDelete(asset)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>Delete</TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </CardFooter>
                 </Card>
               ))}
             </div>
