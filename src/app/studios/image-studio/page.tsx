@@ -481,8 +481,8 @@ export default function ImageStudio() {
       
       if (!token) {
         toast.error('Please login to add images to your assets');
-        return;
-      }
+      return;
+    }
 
       toast.loading('Adding to your assets collection...');
       
