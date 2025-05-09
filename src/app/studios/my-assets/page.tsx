@@ -287,14 +287,14 @@ export default function MyAssetsPage() {
           )}
           
           {!showLoginPrompt && !isLoading && !error && filteredAssets.length > 0 && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            <div className="columns-1 sm:columns-2 md:columns-3 lg:columns-4 gap-6">
               {filteredAssets.map((asset) => (
-                <Card key={asset.id} className="overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col">
-                  <CardContent className="p-0 aspect-[3/4] relative">
+                <Card key={asset.id} className="overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col break-inside-avoid mb-6">
+                  <CardContent className="p-0 relative">
                     <img
                       src={asset.displayUrl}
                       alt={asset.source_prompt || "Asset image"}
-                      className="w-full h-full object-cover"
+                      className="w-full h-auto object-cover block"
                       onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/300x400?text=Image+Not+Found')}
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent"></div>
