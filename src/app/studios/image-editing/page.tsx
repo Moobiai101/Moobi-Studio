@@ -320,7 +320,7 @@ export default function ImageEditing() {
 
   // --- Render ---
   return (
-    <div className="container mx-auto max-w-7xl py-12 px-4 flex-1 flex flex-col bg-gray-900 text-gray-100 min-h-screen">
+    <div className="container mx-auto max-w-7xl py-12 px-4 flex-1 flex flex-col bg-black text-gray-100 min-h-screen">
       {/* Header */}
       <div className="text-center mb-12">
         <div className="flex items-center justify-center gap-4 mb-4">
@@ -487,7 +487,7 @@ export default function ImageEditing() {
                    <Textarea
                      value={editPrompt}
                      onChange={(e) => setEditPrompt(e.target.value)}
-                     placeholder="e.g., 'Make the sky a vibrant sunset', 'add futuristic sunglasses', 'remove the background car'"
+                     placeholder="e.g.,'ghiblify this image', 'Make the sky a vibrant sunset', 'add futuristic sunglasses', 'remove the background car'"
                      rows={5}
                      className="resize-none focus-visible:ring-primary/50 bg-gray-700 border-gray-600 placeholder-gray-500 text-gray-200 rounded-md p-3"
                      disabled={isLoading || !originalImage}
@@ -498,7 +498,7 @@ export default function ImageEditing() {
                       className="w-full gap-2 py-3 text-lg bg-gradient-to-r from-primary to-purple-600 hover:from-primary/90 hover:to-purple-600/90 text-white rounded-md transition-all duration-300 transform hover:scale-105"
                    >
                      {isLoading ? <Loader2 className="h-6 w-6 animate-spin" /> : <Sparkles className="h-6 w-6" />}
-                     {isLoading ? 'Applying Edit...' : 'Apply AI Edit'}
+                     {isLoading ? 'Cooking...' : 'Let AI Cook'}
                    </Button>
                </form>
             </CardContent>
@@ -542,7 +542,7 @@ export default function ImageEditing() {
                 {isLoading && (
                   <div className="flex flex-col items-center text-gray-400">
                     <Loader2 className="h-16 w-16 animate-spin mb-4 text-primary" />
-                    <p className="text-lg">AI is working its magic...</p>
+                    <p className="text-lg">ON IT...</p>
                   </div>
                 )}
                 {!isLoading && editedImage?.url && (
@@ -580,7 +580,7 @@ export default function ImageEditing() {
                 {!isLoading && !editedImage?.url && originalImage && (
                     <div className="flex flex-col items-center text-gray-500 text-center p-8">
                         <Wand2 className="h-20 w-20 mb-4 opacity-50" />
-                        <p className="text-lg">Enter instructions and click 'Apply AI Edit' to see the result.</p>
+                        <p className="text-lg">Enter instructions and click 'Let AI Cook' to see the result.</p>
                     </div>
                 )}
                  {!isLoading && !editedImage?.url && !originalImage && (

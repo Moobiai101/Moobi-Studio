@@ -20,7 +20,7 @@ const WORKER_API_URL = 'https://my-ai-worker.khansameersam96.workers.dev';
 // Interface for User Asset
 interface UserAsset {
   id: string;
-  title: string | null;
+  title: string;
   description: string | null;
   tags: string[] | null;
   r2_object_key: string;
@@ -287,94 +287,51 @@ export default function MyAssetsPage() {
           )}
           
           {!showLoginPrompt && !isLoading && !error && filteredAssets.length > 0 && (
-            <div className="my-masonry-grid columns-2 md:columns-3 lg:columns-4 gap-4 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
               {filteredAssets.map((asset) => (
-                <Card key={asset.id} className="break-inside-avoid mb-4 overflow-hidden group cursor-pointer relative shadow-sm hover:shadow-md transition-shadow">
-                  <div className="relative">
-                    <CardContent className="p-0 aspect-square bg-muted">
-                      {asset.displayUrl ? (
-                        <img 
-                          src={asset.displayUrl} 
-                          alt={asset.title || 'Asset'} 
-                          className="object-cover w-full h-full"
-                          loading="lazy"
-                        />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center">
-                          <ImageIcon className="h-10 w-10 text-muted-foreground/30" />
-                        </div>
-                      )}
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent p-3 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-between">
-                        <div className="absolute top-2 right-2 flex items-center gap-1.5">
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-7 w-7 text-white/80 hover:bg-black/30 hover:text-white"
-                                  onClick={(e) => { e.stopPropagation(); openDetails(asset); }}
-                                >
-                                  <Info className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>View Details</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-7 w-7 text-white/80 hover:bg-black/30 hover:text-white"
-                                  onClick={(e) => { e.stopPropagation(); handleDownload(asset); }}
-                                >
-                                  <Download className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Download</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  className="h-7 w-7 text-white/80 hover:bg-red-500/30 hover:text-red-500"
-                                  onClick={(e) => { 
-                                    e.stopPropagation(); 
-                                    if (confirm('Are you sure you want to delete this asset?')) {
-                                      handleDelete(asset);
-                                    }
-                                  }}
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Delete</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          </TooltipProvider>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </div>
-                  <CardFooter className="p-3 flex-col items-start">
-                    <h3 className="text-sm font-medium line-clamp-1">
-                      {asset.title || 'Untitled Asset'}
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {new Date(asset.created_at).toLocaleDateString()}
-                    </p>
+                <Card key={asset.id} className="overflow-hidden shadow-lg hover:shadow-xl transition-shadow duration-300 flex flex-col">
+                  <CardContent className="p-0 aspect-[3/4] relative">
+                    <img
+                      src={asset.displayUrl}
+                      alt={asset.source_prompt || "Asset image"}
+                      className="w-full h-full object-cover"
+                      onError={(e) => (e.currentTarget.src = 'https://via.placeholder.com/300x400?text=Image+Not+Found')}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent"></div>
+                     <div className="absolute bottom-0 left-0 right-0 p-3">
+                      <h3 className="font-semibold text-sm text-white truncate" title={asset.source_prompt || "Untitled Asset"}>
+                        {asset.source_prompt || "Untitled Asset"}
+                      </h3>
+                      <p className="text-xs text-gray-300">{formatDate(asset.created_at).split(',')[0]}</p>
+                    </div>
+                  </CardContent>
+                  <CardFooter className="p-2 border-t bg-background">
+                    <TooltipProvider delayDuration={100}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openDetails(asset)}>
+                            <Info className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>View Details</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleDownload(asset)}>
+                            <Download className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Download</TooltipContent>
+                      </Tooltip>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive/80" onClick={() => handleDelete(asset)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>Delete</TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </CardFooter>
                 </Card>
               ))}
@@ -413,35 +370,33 @@ export default function MyAssetsPage() {
                       </div>
                     )}
                     
-                    {selectedAsset.source_prompt && (
-                      <div className="mb-4">
-                        <h4 className="text-sm font-medium mb-1">Original Prompt</h4>
-                        <p className="text-sm text-muted-foreground">{selectedAsset.source_prompt}</p>
-                      </div>
-                    )}
+                    <div className="mb-4">
+                      <h4 className="text-sm font-medium mb-1">Original Prompt</h4>
+                      <p className="text-sm text-muted-foreground">{selectedAsset.source_prompt || "No prompt provided."}</p>
+                    </div>
                     
                     <div className="mb-4">
                       <h4 className="text-sm font-medium mb-1">Details</h4>
-                      <ul className="space-y-2">
-                        <li className="flex items-center gap-2 text-sm">
-                          <FileType className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-muted-foreground">{selectedAsset.content_type}</span>
-                        </li>
-                        <li className="flex items-center gap-2 text-sm">
-                          <Download className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-muted-foreground">{formatFileSize(selectedAsset.file_size_bytes)}</span>
-                        </li>
-                        <li className="flex items-center gap-2 text-sm">
-                          <Calendar className="h-4 w-4 text-muted-foreground" />
-                          <span className="text-muted-foreground">{formatDate(selectedAsset.created_at)}</span>
-                        </li>
-                        {selectedAsset.model_used && (
-                          <li className="flex items-center gap-2 text-sm">
-                            <Sparkles className="h-4 w-4 text-muted-foreground" />
-                            <span className="text-muted-foreground">Model: {selectedAsset.model_used}</span>
-                          </li>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-muted-foreground">
+                        <div className="flex items-center gap-2">
+                          <FileType className="h-4 w-4" />
+                          <span>{selectedAsset.content_type}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <ImageIcon className="h-4 w-4" />
+                          <span>{formatFileSize(selectedAsset.file_size_bytes)}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Calendar className="h-4 w-4" />
+                          <span>{formatDate(selectedAsset.created_at)}</span>
+                        </div>
+                        {selectedAsset.source_studio && (
+                          <div className="flex items-center gap-2">
+                            <Sparkles className="h-4 w-4" />
+                            <span>{selectedAsset.source_studio.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                          </div>
                         )}
-                      </ul>
+                      </div>
                     </div>
                     
                     {selectedAsset.tags && selectedAsset.tags.length > 0 && (
