@@ -75,7 +75,6 @@ export default function ImageEditing() {
   const [progressLogs, setProgressLogs] = useState<string[]>([]);
   const [streamProgress, setStreamProgress] = useState<number>(0);
   const [streamError, setStreamError] = useState<string | null>(null);
-  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Reference to abort controller for stream
@@ -183,7 +182,6 @@ export default function ImageEditing() {
     setProgressLogs([]);
     setStreamProgress(0);
     setStreamError(null);
-    setPreviewImageUrl(null);
     
     // Create new abort controller
     if (abortControllerRef.current) {
@@ -273,16 +271,8 @@ export default function ImageEditing() {
 
       console.log("Stream completed");
       
-      // If we reach here with a previewImageUrl but no edited image yet,
-      // use the last preview as the final result
-      if (previewImageUrl && !editedImage) {
-        setEditedImage({
-          url: previewImageUrl,
-          contentType: 'image/png', // Default since we don't know for sure from stream
-          falRequestId: undefined
-        });
-        toast.success("Preview generated! You can now save it to your assets.");
-      }
+      // Final result handling is done in the completed event handler
+      // No need for fallback preview logic anymore
 
     } catch (error: any) {
       if (error.name === 'AbortError') {
@@ -312,10 +302,6 @@ export default function ImageEditing() {
       // Update progress percentage
       setStreamProgress(event.data.progress);
     } 
-    else if (event.type === 'preview' && event.data && event.data.images && event.data.images[0] && event.data.images[0].url) {
-      // Update preview image
-      setPreviewImageUrl(event.data.images[0].url);
-    } 
     else if (event.type === 'completed' && event.data && event.data.images && event.data.images[0] && event.data.images[0].url) {
       // Set final result
       const contentType = event.data.images[0].content_type || 'image/png';
@@ -324,6 +310,8 @@ export default function ImageEditing() {
         contentType: contentType,
         falRequestId: event.data.falRequestId
       });
+      // Set progress to 100%
+      setStreamProgress(1.0);
       toast.success("Image editing complete!");
     } 
     else if (event.type === 'error') {
@@ -700,32 +688,13 @@ export default function ImageEditing() {
                 <CardTitle className="text-xl text-gray-200">Edited Image</CardTitle>
               </CardHeader>
               <CardContent className="flex-1 flex items-center justify-center bg-gray-800/30 rounded-b-lg overflow-hidden p-4 min-h-[300px] md:min-h-[400px] relative group">
-                {isLoading && !previewImageUrl && (
+                {isLoading && (
                   <div className="flex flex-col items-center text-gray-400">
                     <Loader2 className="h-16 w-16 animate-spin mb-4 text-primary" />
-                    <p className="text-lg">ON IT...</p>
+                    <p className="text-lg">Processing your edit...</p>
                     {streamProgress > 0 && (
                       <p className="text-sm mt-2">{Math.round(streamProgress * 100)}% complete</p>
                     )}
-                  </div>
-                )}
-                
-                {/* Show preview while still processing */}
-                {isLoading && previewImageUrl && (
-                  <div className="relative w-full h-full max-h-[70vh]">
-                    <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/30">
-                      <div className="bg-black/50 px-3 py-1 rounded-full flex items-center">
-                        <Loader2 className="h-4 w-4 animate-spin mr-2 text-primary" />
-                        <span className="text-xs text-white font-medium">Processing...</span>
-                      </div>
-                    </div>
-                    <Image
-                      src={previewImageUrl}
-                      alt="Preview image"
-                      fill
-                      className="object-contain opacity-80"
-                      sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-                    />
                   </div>
                 )}
                 

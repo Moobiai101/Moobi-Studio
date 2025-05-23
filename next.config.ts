@@ -25,6 +25,41 @@ const nextConfig: NextConfig = {
         hostname: 'pub-fa2dabd7eff54614b1563a0863fb7cbc.r2.dev',
         pathname: '/**',
       },
+      // Add Fal AI domains for image streaming
+      {
+        protocol: 'https',
+        hostname: 'fal.media',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.fal.media',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'storage.googleapis.com',
+        pathname: '/**',
+      },
+      // Add Vercel deployment domains
+      {
+        protocol: 'https',
+        hostname: '*.vercel.app',
+        pathname: '/**',
+      },
+      // Add localhost for development
+      {
+        protocol: 'http',
+        hostname: 'localhost',
+        port: '3000',
+        pathname: '/**',
+      },
+      // Add worker domain for media proxy
+      {
+        protocol: 'https',
+        hostname: 'my-ai-worker.khansameersam96.workers.dev',
+        pathname: '/api/media/**',
+      },
     ],
   },
   // Configure which output files to include/exclude in the deployment
