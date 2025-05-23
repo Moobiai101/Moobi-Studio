@@ -619,39 +619,6 @@ export default function ImageEditing() {
                </form>
             </CardContent>
           </Card>
-
-          {/* Progress Logs (only shown when loading) */}
-          {isLoading && progressLogs.length > 0 && (
-            <Card className="shadow-xl bg-gray-800 border-gray-700">
-              <CardHeader className="py-3">
-                <CardTitle className="text-md text-gray-200">Processing</CardTitle>
-              </CardHeader>
-              <CardContent className="py-2">
-                <div className="relative pt-1">
-                  <div className="flex mb-2 items-center justify-between">
-                    <div>
-                      <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-primary bg-primary/20">
-                        {Math.round(streamProgress * 100)}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-700/50">
-                    <div 
-                      style={{ width: `${streamProgress * 100}%` }}
-                      className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-primary transition-all duration-300"
-                    ></div>
-                  </div>
-                </div>
-                <ScrollArea className="h-24 w-full text-xs font-mono">
-                  <div className="space-y-1 text-gray-400">
-                    {progressLogs.map((log, i) => (
-                      <p key={i} className="text-wrap break-all">{log}</p>
-                    ))}
-                  </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-          )}
         </div>
 
         {/* Right Panel: Image Display */}
@@ -688,13 +655,65 @@ export default function ImageEditing() {
                 <CardTitle className="text-xl text-gray-200">Edited Image</CardTitle>
               </CardHeader>
               <CardContent className="flex-1 flex items-center justify-center bg-gray-800/30 rounded-b-lg overflow-hidden p-4 min-h-[300px] md:min-h-[400px] relative group">
+                {/* Processing Overlay - Beautiful blur effect with progress */}
                 {isLoading && (
-                  <div className="flex flex-col items-center text-gray-400">
-                    <Loader2 className="h-16 w-16 animate-spin mb-4 text-primary" />
-                    <p className="text-lg">Processing your edit...</p>
-                    {streamProgress > 0 && (
-                      <p className="text-sm mt-2">{Math.round(streamProgress * 100)}% complete</p>
-                    )}
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm z-20 rounded-b-lg">
+                    <div className="bg-gray-900/80 backdrop-blur-md rounded-2xl p-8 max-w-md w-full mx-4 border border-gray-700/50 shadow-2xl">
+                      {/* Header with spinner */}
+                      <div className="flex flex-col items-center mb-6">
+                        <div className="relative">
+                          <Loader2 className="h-16 w-16 animate-spin text-primary mb-4" />
+                          <div className="absolute inset-0 h-16 w-16 rounded-full bg-primary/20 animate-pulse"></div>
+                        </div>
+                        <h3 className="text-xl font-semibold text-gray-100 mb-2">Processing Your Edit</h3>
+                        <p className="text-sm text-gray-400 text-center">AI is working its magic...</p>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="mb-6">
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-sm font-medium text-gray-300">Progress</span>
+                          <span className="text-sm font-semibold text-primary">
+                            {Math.round(streamProgress * 100)}%
+                          </span>
+                        </div>
+                        <div className="w-full bg-gray-700 rounded-full h-3 overflow-hidden">
+                          <div 
+                            className="h-3 bg-gradient-to-r from-primary to-purple-500 rounded-full transition-all duration-500 ease-out shadow-lg"
+                            style={{ width: `${streamProgress * 100}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      {/* Progress Logs */}
+                      {progressLogs.length > 0 && (
+                        <div className="bg-gray-800/60 rounded-lg p-4 max-h-32 overflow-hidden">
+                          <h4 className="text-xs font-semibold text-gray-300 mb-2 uppercase tracking-wide">Activity Log</h4>
+                          <ScrollArea className="h-20 w-full">
+                            <div className="space-y-1">
+                              {progressLogs.slice(-3).map((log, i) => (
+                                <p key={i} className="text-xs text-gray-400 font-mono leading-relaxed animate-fade-in">
+                                  {log}
+                                </p>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        </div>
+                      )}
+
+                      {/* Cancel Button */}
+                      <div className="mt-6 flex justify-center">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleCancelEdit}
+                          className="text-gray-300 border-gray-600 hover:bg-gray-700 hover:text-gray-100 bg-gray-800/50"
+                        >
+                          <X className="h-4 w-4 mr-2" />
+                          Cancel
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 )}
                 
