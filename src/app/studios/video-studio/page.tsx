@@ -1,11 +1,12 @@
 "use client";
 
-import ComingSoon from '@/components/ComingSoon';
+import { VideoProjectProvider } from "@/components/video-studio/providers/video-project-provider";
+import { VideoEditor } from "@/components/video-studio/components/video-editor";
 
 export default function VideoStudioPage() {
   return (
-    <ComingSoon 
-      title="Video Studio"
-    />
+    <VideoProjectProvider>
+      <VideoEditor />
+    </VideoProjectProvider>
   );
 } 
