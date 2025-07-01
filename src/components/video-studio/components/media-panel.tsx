@@ -29,21 +29,35 @@ import {
   getVideoMetadata, 
   getImageDimensions 
 } from "../lib/media-utils";
+import { getMediaInfo } from "../store/video-project-store";
+import { createClient } from "@/lib/supabase/client";
 
 export function MediaPanel() {
   const { project, addMediaAsset } = useVideoProject();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [isCollapsed, setIsCollapsed] = useState(false);
+  
+  const supabase = createClient();
 
   // Filter media assets based on search query
-  const filteredAssets = project.mediaAssets.filter(asset =>
-    asset.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredAssets = project.mediaAssets.filter(asset => {
+    const mediaInfo = getMediaInfo(asset);
+    return mediaInfo.name.toLowerCase().includes(searchQuery.toLowerCase());
+  });
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
+
+    // Get the authenticated user
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
+    
+    if (userError || !user) {
+      console.error("User not authenticated:", userError);
+      alert("Please sign in to upload media files");
+      return;
+    }
 
     for (const file of Array.from(files)) {
       try {
@@ -90,11 +104,24 @@ export function MediaPanel() {
         }
 
         await addMediaAsset({
-          type: type as "video" | "audio" | "image",
-          url,
-          name: file.name,
-          duration,
-          metadata
+          user_id: user.id, // Use the authenticated user's ID
+          title: file.name,
+          file_name: file.name,
+          content_type: file.type,
+          file_size_bytes: file.size,
+          r2_object_key: url,
+          duration_seconds: duration,
+          dimensions: metadata.width && metadata.height ? {
+            width: metadata.width,
+            height: metadata.height
+          } : undefined,
+          video_metadata: type === "video" ? {
+            fps: metadata.fps || 30
+          } : undefined,
+          tags: [],
+          source_studio: "video-studio",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
         });
 
         console.log(`File uploaded: ${file.name} (${type}) - ${duration}s`);
@@ -113,8 +140,10 @@ export function MediaPanel() {
   };
 
   const MediaItem = ({ asset }: { asset: any }) => {
+    const mediaInfo = getMediaInfo(asset);
+    
     const getIcon = () => {
-      switch (asset.type) {
+      switch (mediaInfo.type) {
         case "video": return <Film className="w-4 h-4" />;
         case "audio": return <Music className="w-4 h-4" />;
         case "image": return <ImageIcon className="w-4 h-4" />;
@@ -123,7 +152,7 @@ export function MediaPanel() {
     };
 
     const getTypeColor = () => {
-      switch (asset.type) {
+      switch (mediaInfo.type) {
         case "video": return "text-blue-400";
         case "audio": return "text-green-400";
         case "image": return "text-purple-400";
@@ -140,29 +169,29 @@ export function MediaPanel() {
         >
           {/* Thumbnail */}
           <div className="aspect-video bg-zinc-800 rounded-md mb-2 flex items-center justify-center overflow-hidden">
-            {asset.type === "image" ? (
+            {mediaInfo.type === "image" ? (
               <img 
-                src={asset.url} 
-                alt={asset.name}
+                src={mediaInfo.url} 
+                alt={mediaInfo.name}
                 className="w-full h-full object-cover"
               />
             ) : (
               <div className={cn("flex flex-col items-center gap-1", getTypeColor())}>
                 {getIcon()}
-                <span className="text-xs opacity-75">{asset.type.toUpperCase()}</span>
+                <span className="text-xs opacity-75">{mediaInfo.type.toUpperCase()}</span>
               </div>
             )}
           </div>
 
           {/* Duration overlay */}
-          {asset.duration && asset.type !== "image" && (
+          {mediaInfo.duration && mediaInfo.type !== "image" && (
             <div className="absolute top-3 right-3 bg-black/70 px-1 py-0.5 rounded text-xs text-white">
-              {formatTime(asset.duration)}
+              {formatTime(mediaInfo.duration)}
             </div>
           )}
 
           {/* Type indicator for images */}
-          {asset.type === "image" && (
+          {mediaInfo.type === "image" && (
             <div className="absolute top-3 right-3 bg-purple-600/80 px-1 py-0.5 rounded text-xs text-white">
               IMG
             </div>
@@ -170,11 +199,11 @@ export function MediaPanel() {
 
           {/* Asset info */}
           <div className="space-y-1">
-            <p className="text-xs text-white truncate font-medium">{asset.name}</p>
+            <p className="text-xs text-white truncate font-medium">{mediaInfo.name}</p>
             <div className="flex items-center justify-between">
-              <p className={cn("text-xs capitalize", getTypeColor())}>{asset.type}</p>
-              {asset.type === "image" && (
-                <p className="text-xs text-zinc-400">{formatTime(asset.duration || 5)}</p>
+              <p className={cn("text-xs capitalize", getTypeColor())}>{mediaInfo.type}</p>
+              {mediaInfo.type === "image" && (
+                <p className="text-xs text-zinc-400">{formatTime(mediaInfo.duration || 5)}</p>
               )}
             </div>
           </div>
@@ -191,13 +220,13 @@ export function MediaPanel() {
             {getIcon()}
           </div>
           <div className="flex-1 min-w-0">
-            <p className="text-sm text-white truncate font-medium">{asset.name}</p>
+            <p className="text-sm text-white truncate font-medium">{mediaInfo.name}</p>
             <div className="flex items-center gap-2 text-xs text-zinc-400">
-              <span className="capitalize">{asset.type}</span>
-              {(asset.duration || asset.type === "image") && (
+              <span className="capitalize">{mediaInfo.type}</span>
+              {(mediaInfo.duration || mediaInfo.type === "image") && (
                 <>
                   <span>•</span>
-                  <span>{formatTime(asset.duration || 5)}</span>
+                  <span>{formatTime(mediaInfo.duration || 5)}</span>
                 </>
               )}
             </div>
