@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useVideoProject } from "../hooks/use-video-project";
 import { formatTime, formatFileSize } from "../lib/utils";
+import { getMediaInfo } from "../store/video-project-store";
 
 interface MediaGallerySheetProps {
   open: boolean;
@@ -49,6 +50,9 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
     return null;
   }
 
+  // Get media info using our helper function
+  const mediaInfo = getMediaInfo(selectedAsset);
+
   // Find clips using this asset
   const relatedClips = project.tracks
     .flatMap((track: any) => track.clips)
@@ -57,7 +61,7 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
   const handleAddToTimeline = () => {
     // Find appropriate track
     const targetTrack = project.tracks.find((track: any) => 
-      (selectedAsset.type === "video" || selectedAsset.type === "image") 
+      (mediaInfo.type === "video" || mediaInfo.type === "image") 
         ? track.type === "video" 
         : track.type === "audio"
     );
@@ -72,9 +76,9 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
         mediaId: selectedAsset.id,
         trackId: targetTrack.id,
         startTime: lastClip,
-        endTime: lastClip + (selectedAsset.duration || 5),
+        endTime: lastClip + (mediaInfo.duration || 5),
         trimStart: 0,
-        trimEnd: selectedAsset.duration || 5,
+        trimEnd: mediaInfo.duration || 5,
         volume: 1,
         muted: false,
         effects: [],
@@ -95,7 +99,7 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
       console.log("Renaming asset to:", newName);
       setEditingName(false);
     } else {
-      setNewName(selectedAsset.name);
+      setNewName(mediaInfo.name);
       setEditingName(true);
     }
   };
@@ -103,8 +107,8 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
   const handleDownload = () => {
     // Create download link
     const link = document.createElement('a');
-    link.href = selectedAsset.url;
-    link.download = selectedAsset.name;
+    link.href = mediaInfo.url;
+    link.download = mediaInfo.name;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -129,9 +133,9 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
           {/* Media Preview */}
           <div className="space-y-4">
             <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
-              {selectedAsset.type === "video" ? (
+              {mediaInfo.type === "video" ? (
                 <video
-                  src={selectedAsset.url}
+                  src={mediaInfo.url}
                   className="w-full h-full object-contain"
                   controls={false}
                   muted={isMuted}
@@ -141,10 +145,10 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                     if (el) el.volume = volume;
                   }}
                 />
-              ) : selectedAsset.type === "image" ? (
+              ) : mediaInfo.type === "image" ? (
                 <img
-                  src={selectedAsset.url}
-                  alt={selectedAsset.name}
+                  src={mediaInfo.url}
+                  alt={mediaInfo.name}
                   className="w-full h-full object-contain"
                 />
               ) : (
@@ -152,13 +156,13 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                   <div className="text-center text-white">
                     <Volume2 className="w-12 h-12 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">Audio File</p>
-                    <p className="text-xs opacity-75">{selectedAsset.name}</p>
+                    <p className="text-xs opacity-75">{mediaInfo.name}</p>
                   </div>
                 </div>
               )}
 
               {/* Media Controls */}
-              {(selectedAsset.type === "video" || selectedAsset.type === "audio") && (
+              {(mediaInfo.type === "video" || mediaInfo.type === "audio") && (
                 <div className="absolute bottom-4 left-4 right-4 flex items-center gap-2">
                   <Button
                     variant="secondary"
@@ -169,7 +173,7 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                     {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                   </Button>
 
-                  {selectedAsset.type === "video" && (
+                  {mediaInfo.type === "video" && (
                     <>
                       <Button
                         variant="secondary"
@@ -243,7 +247,7 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 mt-1">
-                        <p className="text-sm flex-1">{selectedAsset.name}</p>
+                        <p className="text-sm flex-1">{mediaInfo.name}</p>
                         <Button size="sm" variant="ghost" onClick={handleRename}>
                           <Edit className="w-3 h-3" />
                         </Button>
@@ -253,43 +257,43 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
 
                   <div>
                     <Label className="text-sm font-medium">Type</Label>
-                    <p className="text-sm text-muted-foreground capitalize">{selectedAsset.type}</p>
+                    <p className="text-sm text-muted-foreground capitalize">{mediaInfo.type}</p>
                   </div>
 
-                  {selectedAsset.duration && (
+                  {mediaInfo.duration && (
                     <div>
                       <Label className="text-sm font-medium">Duration</Label>
-                      <p className="text-sm text-muted-foreground">{formatTime(selectedAsset.duration)}</p>
+                      <p className="text-sm text-muted-foreground">{formatTime(mediaInfo.duration)}</p>
                     </div>
                   )}
 
-                  {selectedAsset.metadata?.size && (
+                  {mediaInfo.metadata?.size && (
                     <div>
                       <Label className="text-sm font-medium">File Size</Label>
-                      <p className="text-sm text-muted-foreground">{formatFileSize(selectedAsset.metadata.size)}</p>
+                      <p className="text-sm text-muted-foreground">{formatFileSize(mediaInfo.metadata.size)}</p>
                     </div>
                   )}
 
-                  {selectedAsset.metadata?.width && selectedAsset.metadata?.height && (
+                  {mediaInfo.metadata?.width && mediaInfo.metadata?.height && (
                     <div>
                       <Label className="text-sm font-medium">Resolution</Label>
                       <p className="text-sm text-muted-foreground">
-                        {selectedAsset.metadata.width} × {selectedAsset.metadata.height}
+                        {mediaInfo.metadata.width} × {mediaInfo.metadata.height}
                       </p>
                     </div>
                   )}
 
-                  {selectedAsset.metadata?.fps && (
+                  {mediaInfo.metadata?.fps && (
                     <div>
                       <Label className="text-sm font-medium">Frame Rate</Label>
-                      <p className="text-sm text-muted-foreground">{selectedAsset.metadata.fps} fps</p>
+                      <p className="text-sm text-muted-foreground">{mediaInfo.metadata.fps} fps</p>
                     </div>
                   )}
 
                   <div>
                     <Label className="text-sm font-medium">Added</Label>
                     <p className="text-sm text-muted-foreground">
-                      {selectedAsset.createdAt.toLocaleDateString()} at {selectedAsset.createdAt.toLocaleTimeString()}
+                      {selectedAsset.created_at ? new Date(selectedAsset.created_at).toLocaleDateString() : 'Unknown'} at {selectedAsset.created_at ? new Date(selectedAsset.created_at).toLocaleTimeString() : 'Unknown'}
                     </p>
                   </div>
                 </div>
@@ -372,7 +376,7 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                     />
                   </div>
 
-                  {selectedAsset.type === "image" && (
+                  {mediaInfo.type === "image" && (
                     <div>
                       <Label className="text-sm">Default Duration (seconds)</Label>
                       <Input
