@@ -9,7 +9,7 @@ import {
   useVideoConfig,
   Sequence 
 } from "remotion";
-import { VideoProject, TimelineClip, MediaAsset } from "../store/video-project-store";
+import { VideoProject, TimelineClip, MediaAsset, getMediaInfo } from "../store/video-project-store";
 
 interface VideoCompositionProps {
   project: VideoProject;
@@ -81,6 +81,7 @@ const VideoTrackSequence: React.FC<TrackSequenceProps> = ({
         const asset = project.mediaAssets.find((a: MediaAsset) => a.id === clip.mediaId);
         if (!asset) return null;
 
+        const mediaInfo = getMediaInfo(asset);
         const startFrame = Math.floor(clip.startTime * project.fps);
         const clipDuration = clip.endTime - clip.startTime;
         const durationInFrames = Math.floor(clipDuration * project.fps);
@@ -92,10 +93,10 @@ const VideoTrackSequence: React.FC<TrackSequenceProps> = ({
             durationInFrames={durationInFrames}
             premountFor={30} // Premount 1 second for smooth playback
           >
-            {asset.type === "video" ? (
-              <VideoClipRenderer asset={asset} clip={clip} />
-            ) : asset.type === "image" ? (
-              <ImageClipRenderer asset={asset} clip={clip} />
+            {mediaInfo.type === "video" ? (
+              <VideoClipRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} />
+            ) : mediaInfo.type === "image" ? (
+              <ImageClipRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} />
             ) : null}
           </Sequence>
         );
@@ -116,6 +117,7 @@ const OverlayTrackSequence: React.FC<TrackSequenceProps> = ({
         const asset = project.mediaAssets.find((a: MediaAsset) => a.id === clip.mediaId);
         if (!asset) return null;
 
+        const mediaInfo = getMediaInfo(asset);
         const startFrame = Math.floor(clip.startTime * project.fps);
         const clipDuration = clip.endTime - clip.startTime;
         const durationInFrames = Math.floor(clipDuration * project.fps);
@@ -127,10 +129,10 @@ const OverlayTrackSequence: React.FC<TrackSequenceProps> = ({
             durationInFrames={durationInFrames}
             premountFor={30}
           >
-            {asset.type === "video" ? (
-              <OverlayVideoRenderer asset={asset} clip={clip} track={track} />
-            ) : asset.type === "image" ? (
-              <OverlayImageRenderer asset={asset} clip={clip} track={track} />
+            {mediaInfo.type === "video" ? (
+              <OverlayVideoRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} track={track} />
+            ) : mediaInfo.type === "image" ? (
+              <OverlayImageRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} track={track} />
             ) : null}
           </Sequence>
         );
@@ -179,11 +181,12 @@ const AudioTrackSequence: React.FC<TrackSequenceProps> = ({
 // Individual clip renderers
 const VideoClipRenderer: React.FC<{
   asset: MediaAsset;
+  mediaInfo: ReturnType<typeof getMediaInfo>;
   clip: TimelineClip;
-}> = ({ asset, clip }) => {
+}> = ({ asset, mediaInfo, clip }) => {
   return (
     <Video
-      src={asset.url}
+      src={mediaInfo.url}
       startFrom={Math.floor(clip.trimStart * 30)} // TODO: Use proper FPS from project
       endAt={Math.floor(clip.trimEnd * 30)}
       volume={0} // Muted - Audio Engine handles all audio
@@ -202,11 +205,12 @@ const VideoClipRenderer: React.FC<{
 
 const ImageClipRenderer: React.FC<{
   asset: MediaAsset;
+  mediaInfo: ReturnType<typeof getMediaInfo>;
   clip: TimelineClip;
-}> = ({ asset, clip }) => {
+}> = ({ asset, mediaInfo, clip }) => {
   return (
     <Img
-      src={asset.url}
+      src={mediaInfo.url}
       style={{
         width: "100%",
         height: "100%",
@@ -223,9 +227,10 @@ const ImageClipRenderer: React.FC<{
 // Overlay renderers (with professional compositing support and transform data)
 const OverlayVideoRenderer: React.FC<{
   asset: MediaAsset;
+  mediaInfo: ReturnType<typeof getMediaInfo>;
   clip: TimelineClip;
   track: any;
-}> = ({ asset, clip, track }) => {
+}> = ({ asset, mediaInfo, clip, track }) => {
   // Get transform data from clip with proper defaults
   const defaultTransform = {
     position: { x: 0, y: 0 },
@@ -242,8 +247,8 @@ const OverlayVideoRenderer: React.FC<{
     opacity: clipTransform.opacity ?? defaultTransform.opacity
   };
 
-  const aspectRatio = asset.metadata?.width && asset.metadata?.height 
-    ? asset.metadata.width / asset.metadata.height 
+  const aspectRatio = mediaInfo.metadata?.width && mediaInfo.metadata?.height 
+    ? mediaInfo.metadata.width / mediaInfo.metadata.height 
     : 16 / 9;
 
   const containerStyle: React.CSSProperties = {
@@ -276,7 +281,7 @@ const OverlayVideoRenderer: React.FC<{
         onClick={(e) => e.stopPropagation()}
       >
         <Video
-          src={asset.url}
+          src={mediaInfo.url}
           startFrom={Math.floor(clip.trimStart * 30)}
           endAt={Math.floor(clip.trimEnd * 30)}
           volume={0} // Muted - Audio Engine handles all audio
@@ -296,9 +301,10 @@ const OverlayVideoRenderer: React.FC<{
 
 const OverlayImageRenderer: React.FC<{
   asset: MediaAsset;
+  mediaInfo: ReturnType<typeof getMediaInfo>;
   clip: TimelineClip;
   track: any;
-}> = ({ asset, clip, track }) => {
+}> = ({ asset, mediaInfo, clip, track }) => {
   // Get transform data from clip with proper defaults
   const defaultTransform = {
     position: { x: 0, y: 0 },
@@ -315,8 +321,8 @@ const OverlayImageRenderer: React.FC<{
     opacity: clipTransform.opacity ?? defaultTransform.opacity
   };
 
-  const aspectRatio = asset.metadata?.width && asset.metadata?.height
-    ? asset.metadata.width / asset.metadata.height
+  const aspectRatio = mediaInfo.metadata?.width && mediaInfo.metadata?.height
+    ? mediaInfo.metadata.width / mediaInfo.metadata.height
     : 1 / 1; // Default to square for images
 
   const containerStyle: React.CSSProperties = {
@@ -349,7 +355,7 @@ const OverlayImageRenderer: React.FC<{
         onClick={(e) => e.stopPropagation()}
       >
         <Img
-          src={asset.url}
+          src={mediaInfo.url}
           style={{
             width: "100%",
             height: "100%",

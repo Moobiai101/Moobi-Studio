@@ -15,6 +15,8 @@ import {
   Upload
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { getMediaInfo } from '../store/video-project-store';
+import { createClient } from '@/lib/supabase/client';
 
 interface OverlayControlsProps {
   selectedClip?: any;
@@ -26,6 +28,8 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
   const [isOverlayDialogOpen, setIsOverlayDialogOpen] = useState(false);
   const [selectedOverlayType, setSelectedOverlayType] = useState<'image' | 'video' | null>(null);
   const [pendingOverlay, setPendingOverlay] = useState<{name: string, url: string, duration: number} | null>(null);
+  
+  const supabase = createClient();
 
   // Get overlay track
   const overlayTrack = project.tracks.find(track => track.type === 'overlay');
@@ -33,18 +37,20 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
   // Handle pending overlay when asset is added to project
   useEffect(() => {
     if (pendingOverlay && overlayTrack) {
-      const addedAsset = project.mediaAssets.find(asset => 
-        asset.name === pendingOverlay.name && asset.url === pendingOverlay.url
-      );
+      const addedAsset = project.mediaAssets.find(asset => {
+        const mediaInfo = getMediaInfo(asset);
+        return mediaInfo.name === pendingOverlay.name && mediaInfo.url === pendingOverlay.url;
+      });
       
       if (addedAsset) {
+        const mediaInfo = getMediaInfo(addedAsset);
         addClip({
           mediaId: addedAsset.id,
           trackId: overlayTrack.id,
           startTime: currentTime,
           endTime: currentTime + pendingOverlay.duration,
           trimStart: 0,
-          trimEnd: addedAsset.duration || pendingOverlay.duration,
+          trimEnd: mediaInfo.duration || pendingOverlay.duration,
           volume: 1,
           muted: false,
           effects: []
@@ -70,48 +76,90 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
   // Handle overlay file upload
   const handleOverlayUpload = async (file: File) => {
     try {
+      // Get the authenticated user
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      
+      if (userError || !user) {
+        console.error("User not authenticated:", userError);
+        alert("Please sign in to upload overlay files");
+        return;
+      }
+
       const url = URL.createObjectURL(file);
       const type = file.type.startsWith('image/') ? 'image' : 'video' as 'image' | 'video';
       
       // Get actual duration for videos
       let duration: number | undefined = undefined;
+      let metadata: any = {
+        size: file.size,
+        type: file.type,
+      };
+
       if (type === 'video') {
-        // Get actual video duration
+        // Get actual video duration and metadata
         const video = document.createElement('video');
         video.src = url;
         await new Promise((resolve) => {
           video.addEventListener('loadedmetadata', () => {
             duration = video.duration;
+            metadata = {
+              ...metadata,
+              width: video.videoWidth,
+              height: video.videoHeight,
+            };
             resolve(void 0);
           });
         });
+      } else if (type === 'image') {
+        // Get image dimensions
+        const img = document.createElement('img');
+        img.src = url;
+        await new Promise((resolve) => {
+          img.addEventListener('load', () => {
+            metadata = {
+              ...metadata,
+              width: img.naturalWidth,
+              height: img.naturalHeight,
+            };
+            resolve(void 0);
+          });
+        });
+        duration = 3; // Default 3 seconds for images
       }
       
-      // Create media asset with proper duration
+      // Create media asset with correct UserAsset structure
       const mediaAsset = {
-        type,
-        url,
-        name: file.name,
-        duration, // Will be actual duration for video, undefined for image
-        thumbnail: type === 'image' ? url : undefined,
-        metadata: {
-          size: file.size,
-        }
+        user_id: user.id,
+        title: file.name,
+        file_name: file.name,
+        content_type: file.type,
+        file_size_bytes: file.size,
+        r2_object_key: url,
+        duration_seconds: duration,
+        dimensions: metadata.width && metadata.height ? {
+          width: metadata.width,
+          height: metadata.height
+        } : undefined,
+        video_metadata: type === 'video' ? {
+          fps: 30 // Default FPS
+        } : undefined,
+        tags: [],
+        source_studio: "video-studio",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       };
 
       // Add to media assets first
-      addMediaAsset(mediaAsset);
+      await addMediaAsset(mediaAsset);
 
       // Set up pending overlay to be added when the asset is available
       if (overlayTrack) {
         // Use actual duration for videos, default for images
-        const overlayDuration = mediaAsset.type === 'video' 
-          ? (duration || 5) // Use actual duration or fallback to 5s
-          : 3; // 3s default for images
+        const overlayDuration = duration || 3;
         
         setPendingOverlay({
-          name: mediaAsset.name,
-          url: mediaAsset.url,
+          name: file.name,
+          url: url,
           duration: overlayDuration
         });
       }
@@ -120,6 +168,7 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
       setSelectedOverlayType(null);
     } catch (error) {
       console.error('Error uploading overlay:', error);
+      alert('Failed to upload overlay. Please try again.');
     }
   };
 
