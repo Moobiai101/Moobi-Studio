@@ -3,6 +3,9 @@ import { nanoid } from "nanoid";
 import { VideoProjectService, createAutoSave } from "@/services/video-projects";
 import { VideoEditorProject, ProjectData, UserAsset } from "@/types/database";
 
+// Auto-save debounce delay (3 seconds)
+const AUTO_SAVE_DELAY = 3000;
+
 // Re-export database types for compatibility
 export type MediaAsset = UserAsset;
 
@@ -196,7 +199,56 @@ const createDefaultProject = (projectId: string): VideoProject => ({
 export type VideoProjectStore = ReturnType<typeof createVideoProjectStore>;
 
 export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
-  createStore<VideoProjectState>((set, get) => ({
+  createStore<VideoProjectState>((set, get) => {
+    // Create auto-save instance for this project
+    const autoSave = createAutoSave(projectId);
+
+    // Helper to trigger auto-save with current state
+    const triggerAutoSave = () => {
+      const state = get();
+      const projectData: ProjectData = {
+        tracks: state.project.tracks.map(track => ({
+          id: track.id,
+          type: track.type,
+          name: track.name,
+          position: state.project.tracks.indexOf(track),
+          settings: {
+            volume: track.volume,
+            opacity: track.opacity,
+            locked: track.locked,
+            visible: track.visible,
+            blendMode: track.blendMode
+          }
+        })),
+        clips: state.project.tracks.flatMap(track => 
+          track.clips.map(clip => ({
+            id: clip.id,
+            trackId: track.id,
+            assetId: clip.mediaId,
+            startTime: clip.startTime,
+            endTime: clip.endTime,
+            trimStart: clip.trimStart,
+            trimEnd: clip.trimEnd,
+            volume: clip.volume,
+            isMuted: clip.muted,
+            effects: clip.effects?.map(effect => ({
+              type: effect.type,
+              parameters: effect.parameters
+            })) || []
+          }))
+        ),
+        transitions: [],
+        effects: [],
+        timeline: {
+          zoom: state.timelineZoom,
+          scroll: state.timelineScroll,
+          currentTime: state.currentTime
+        }
+      };
+      autoSave(projectData);
+    };
+
+    return {
     // Initial state
     project: createDefaultProject(projectId),
     currentTime: 0,
@@ -219,7 +271,7 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
     setPlaybackRate: (rate) => set({ playbackRate: rate }),
 
     // Media management
-    addMediaAsset: (asset) =>
+    addMediaAsset: (asset) => {
       set((state) => ({
         project: {
           ...state.project,
@@ -233,7 +285,9 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           ],
           updatedAt: new Date(),
         },
-      })),
+      }));
+      triggerAutoSave();
+    },
 
     removeMediaAsset: (id) =>
       set((state) => ({
@@ -298,7 +352,7 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
     setSelectedTrackId: (id) => set({ selectedTrackId: id }),
 
     // Clip management
-    addClip: (clip) =>
+    addClip: (clip) => {
       set((state) => {
         const newClip: TimelineClip = {
           ...clip,
@@ -317,9 +371,11 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
             updatedAt: new Date(),
           },
         };
-      }),
+      });
+      triggerAutoSave();
+    },
 
-    removeClip: (id) =>
+    removeClip: (id) => {
       set((state) => ({
         project: {
           ...state.project,
@@ -329,9 +385,11 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           })),
           updatedAt: new Date(),
         },
-      })),
+      }));
+      triggerAutoSave();
+    },
 
-    updateClip: (id, updates) =>
+    updateClip: (id, updates) => {
       set((state) => ({
         project: {
           ...state.project,
@@ -343,7 +401,9 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           })),
           updatedAt: new Date(),
         },
-      })),
+      }));
+      triggerAutoSave();
+    },
 
     setSelectedClipId: (id) => set({ selectedClipId: id }),
 
@@ -439,13 +499,129 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
     // Project management
     saveProject: async () => {
       const state = get();
-      // TODO: Implement project saving to IndexedDB or backend
-      console.log("Saving project:", state.project);
+      try {
+        // Convert store project format to database format
+        const projectData: ProjectData = {
+          tracks: state.project.tracks.map(track => ({
+            id: track.id,
+            type: track.type,
+            name: track.name,
+            position: state.project.tracks.indexOf(track),
+            settings: {
+              volume: track.volume,
+              opacity: track.opacity,
+              locked: track.locked,
+              visible: track.visible,
+              blendMode: track.blendMode
+            }
+          })),
+          clips: state.project.tracks.flatMap(track => 
+            track.clips.map(clip => ({
+              id: clip.id,
+              trackId: track.id,
+              assetId: clip.mediaId,
+              startTime: clip.startTime,
+              endTime: clip.endTime,
+              trimStart: clip.trimStart,
+              trimEnd: clip.trimEnd,
+              volume: clip.volume,
+              isMuted: clip.muted,
+              effects: clip.effects?.map(effect => ({
+                type: effect.type,
+                parameters: effect.parameters
+              })) || []
+            }))
+          ),
+          transitions: [], // TODO: Add transition support
+          effects: [],
+          timeline: {
+            zoom: state.timelineZoom,
+            scroll: state.timelineScroll,
+            currentTime: state.currentTime
+          }
+        };
+
+        await VideoProjectService.updateProject(state.project.id, {
+          title: state.project.name,
+          resolution: state.project.resolution,
+          fps: state.project.fps,
+          duration_seconds: state.project.duration,
+          project_data: projectData
+        });
+
+        console.log("Project saved successfully:", state.project.id);
+      } catch (error) {
+        console.error("Failed to save project:", error);
+        throw error;
+      }
     },
 
     loadProject: async (projectId) => {
-      // TODO: Implement project loading from IndexedDB or backend
-      console.log("Loading project:", projectId);
+      try {
+        const dbProject = await VideoProjectService.getProject(projectId);
+        
+        // Convert database format to store format
+        const project: VideoProject = {
+          id: dbProject.id,
+          name: dbProject.title,
+          tracks: dbProject.project_data.tracks?.map(dbTrack => ({
+            id: dbTrack.id,
+            type: dbTrack.type,
+            name: dbTrack.name,
+            clips: dbProject.project_data.clips
+              ?.filter(clip => clip.trackId === dbTrack.id)
+              .map(clip => ({
+                id: clip.id,
+                mediaId: clip.assetId || '',
+                trackId: clip.trackId,
+                startTime: clip.startTime,
+                endTime: clip.endTime,
+                trimStart: clip.trimStart || 0,
+                trimEnd: clip.trimEnd || (clip.endTime - clip.startTime),
+                volume: clip.volume || 1,
+                muted: clip.isMuted || false,
+                effects: clip.effects?.map(effect => ({
+                  id: nanoid(),
+                  type: effect.type,
+                  parameters: effect.parameters,
+                  enabled: true
+                })) || []
+              })) || [],
+            muted: false,
+            volume: dbTrack.settings?.volume || 1,
+            locked: dbTrack.settings?.locked || false,
+            visible: dbTrack.settings?.visible !== false,
+            height: dbTrack.type === 'video' ? 80 : 60,
+            ...(dbTrack.type === 'overlay' && {
+              opacity: dbTrack.settings?.opacity || 1,
+              blendMode: (dbTrack.settings?.blendMode as any) || 'normal'
+            })
+          })) || [],
+          mediaAssets: [], // Will be loaded separately
+          duration: dbProject.duration_seconds,
+          fps: dbProject.fps,
+          resolution: dbProject.resolution,
+          createdAt: new Date(dbProject.created_at),
+          updatedAt: new Date(dbProject.updated_at)
+        };
+
+        // Restore timeline state
+        if (dbProject.project_data.timeline) {
+          set({
+            project,
+            timelineZoom: dbProject.project_data.timeline.zoom || 1,
+            timelineScroll: dbProject.project_data.timeline.scroll || 0,
+            currentTime: dbProject.project_data.timeline.currentTime || 0
+          });
+        } else {
+          set({ project });
+        }
+
+        console.log("Project loaded successfully:", projectId);
+      } catch (error) {
+        console.error("Failed to load project:", error);
+        throw error;
+      }
     },
 
     exportProject: async (format) => {
@@ -454,4 +630,5 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
       // TODO: Implement project export using Remotion
       console.log("Exporting project:", state.project, "format:", format);
     },
-  })); 
+  };
+}); 

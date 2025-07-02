@@ -23,22 +23,16 @@ import {
   PanelLeft
 } from "lucide-react";
 import { formatTime } from "../lib/utils";
-import { 
-  detectFileType, 
-  getMediaDuration, 
-  getVideoMetadata, 
-  getImageDimensions 
-} from "../lib/media-utils";
 import { getMediaInfo } from "../store/video-project-store";
-import { createClient } from "@/lib/supabase/client";
+import { MediaAssetService } from "@/services/media-assets";
+import { toast } from "sonner";
 
 export function MediaPanel() {
   const { project, addMediaAsset } = useVideoProject();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [isCollapsed, setIsCollapsed] = useState(false);
-  
-  const supabase = createClient();
+  const [isUploading, setIsUploading] = useState(false);
 
   // Filter media assets based on search query
   const filteredAssets = project.mediaAssets.filter(asset => {
@@ -50,86 +44,49 @@ export function MediaPanel() {
     const files = e.target.files;
     if (!files) return;
 
-    // Get the authenticated user
-    const { data: { user }, error: userError } = await supabase.auth.getUser();
-    
-    if (userError || !user) {
-      console.error("User not authenticated:", userError);
-      alert("Please sign in to upload media files");
-      return;
-    }
+    setIsUploading(true);
+    let successCount = 0;
+    let errorCount = 0;
 
     for (const file of Array.from(files)) {
       try {
-        const url = URL.createObjectURL(file);
-        const type = detectFileType(file);
-        
-        if (type === "unknown") {
-          console.warn(`Unsupported file type: ${file.name}`);
-          continue;
-        }
+        toast.info(`Uploading ${file.name}...`);
 
-        let duration: number | undefined = undefined;
-        let metadata: any = {
-          size: file.size,
-          type: file.type,
-        };
-
-        // Get actual metadata based on file type
-        try {
-          if (type === "video") {
-            const videoMeta = await getVideoMetadata(url);
-            duration = videoMeta.duration;
-            metadata = {
-              ...metadata,
-              width: videoMeta.width,
-              height: videoMeta.height,
-              fps: videoMeta.fps,
-            };
-          } else if (type === "audio") {
-            duration = await getMediaDuration(url, "audio");
-          } else if (type === "image") {
-            duration = 5; // Default 5 seconds for images
-            const imageDims = await getImageDimensions(url);
-            metadata = {
-              ...metadata,
-              width: imageDims.width,
-              height: imageDims.height,
-            };
+        const result = await MediaAssetService.uploadMediaAsset(file, {
+          onProgress: (progress) => {
+            // You could update UI progress here if needed
+            console.log(`Upload progress for ${file.name}: ${Math.round(progress)}%`);
+          },
+          onStatusChange: (status) => {
+            console.log(`Upload status for ${file.name}: ${status}`);
           }
-        } catch (metaError) {
-          console.warn(`Could not extract metadata for ${file.name}:`, metaError);
-          // Use defaults
-          duration = type === "image" ? 5 : 10;
-        }
-
-        await addMediaAsset({
-          user_id: user.id, // Use the authenticated user's ID
-          title: file.name,
-          file_name: file.name,
-          content_type: file.type,
-          file_size_bytes: file.size,
-          r2_object_key: url,
-          duration_seconds: duration,
-          dimensions: metadata.width && metadata.height ? {
-            width: metadata.width,
-            height: metadata.height
-          } : undefined,
-          video_metadata: type === "video" ? {
-            fps: metadata.fps || 30
-          } : undefined,
-          tags: [],
-          source_studio: "video-studio",
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
         });
 
-        console.log(`File uploaded: ${file.name} (${type}) - ${duration}s`);
+        if (result.success) {
+          // Add the asset to the project store
+          addMediaAsset(result.asset);
+          successCount++;
+          toast.success(`${file.name} uploaded successfully!`);
+        } else {
+          errorCount++;
+          toast.error(`Failed to upload ${file.name}: ${result.error}`);
+        }
       } catch (error) {
-        console.error("Error uploading file:", error);
+        errorCount++;
+        console.error(`Error uploading ${file.name}:`, error);
+        toast.error(`Failed to upload ${file.name}`);
       }
     }
 
+    // Show summary
+    if (successCount > 0) {
+      toast.success(`Successfully uploaded ${successCount} file${successCount !== 1 ? 's' : ''}`);
+    }
+    if (errorCount > 0) {
+      toast.error(`Failed to upload ${errorCount} file${errorCount !== 1 ? 's' : ''}`);
+    }
+
+    setIsUploading(false);
     // Clear the input so the same file can be uploaded again
     e.target.value = "";
   };
@@ -283,9 +240,10 @@ export function MediaPanel() {
                   size="sm"
                   className="text-zinc-400 hover:text-white h-7 px-2 text-xs"
                   onClick={() => document.getElementById('media-file-input')?.click()}
+                  disabled={isUploading}
                 >
                   <Plus className="w-3 h-3 mr-1" />
-                  Add
+                  {isUploading ? "Uploading..." : "Add"}
                 </Button>
               </div>
             </div>
