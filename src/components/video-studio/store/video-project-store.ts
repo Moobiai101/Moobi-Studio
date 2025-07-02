@@ -1,7 +1,8 @@
-import { createStore } from "zustand/vanilla";
+import { createStore } from "zustand";
 import { nanoid } from "nanoid";
 import { VideoProjectService, createAutoSave } from "@/services/video-projects";
 import { VideoEditorProject, ProjectData, UserAsset } from "@/types/database";
+import { MediaAssetService } from "@/services/media-assets";
 
 // Auto-save debounce delay (3 seconds)
 const AUTO_SAVE_DELAY = 3000;
@@ -17,7 +18,7 @@ export const getMediaInfo = (asset: UserAsset) => {
   
   return {
     type: isVideo ? 'video' : isAudio ? 'audio' : 'image' as 'video' | 'audio' | 'image',
-    url: asset.r2_object_key, // This will be the URL in our current implementation
+    url: MediaAssetService.getAssetUrl(asset.r2_object_key), // Generate proper proxy URL
     name: asset.title,
     duration: asset.duration_seconds,
     metadata: {
@@ -277,11 +278,7 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           ...state.project,
           mediaAssets: [
             ...state.project.mediaAssets,
-            {
-              ...asset,
-              id: nanoid(),
-              createdAt: new Date(),
-            },
+            asset as MediaAsset,  // Asset already has all required fields
           ],
           updatedAt: new Date(),
         },

@@ -4,6 +4,7 @@ import { createContext, useContext, useRef, useEffect, useState, type ReactNode 
 import { useStore } from "zustand";
 import { createVideoProjectStore, type VideoProjectStore, type VideoProjectState } from "../store/video-project-store";
 import { VideoProjectService } from "@/services/video-projects";
+import { MediaAssetService } from "@/services/media-assets";
 import { VideoEditorProject } from "@/types/database";
 import { VideoProjectList } from "../components/video-project-list";
 
@@ -46,11 +47,23 @@ export function VideoProjectProvider({
         
         setCurrentProject(project);
         
-                 if (!storeRef.current) {
-           storeRef.current = createVideoProjectStore({ 
-             projectId: project.id
-           });
-         }
+        // Initialize the store with the project
+        if (!storeRef.current) {
+          storeRef.current = createVideoProjectStore({ 
+            projectId: project.id
+          });
+        }
+        
+        // Load the project data into the store
+        await storeRef.current.getState().loadProject(project.id);
+        
+        // Load media assets for the video studio
+        const mediaAssets = await MediaAssetService.getUserAssets();
+        
+        // Add media assets to the store
+        mediaAssets.forEach(asset => {
+          storeRef.current?.getState().addMediaAsset(asset);
+        });
         
         setShowProjectList(false);
       } catch (error) {
@@ -67,26 +80,38 @@ export function VideoProjectProvider({
     initializeProject();
   }, [projectId]);
   
-  const handleOpenProject = (project: VideoEditorProject) => {
+  const handleOpenProject = async (project: VideoEditorProject) => {
     setCurrentProject(project);
     setShowProjectList(false);
+    setIsLoading(true);
     
-         // Update the store with the new project
-     if (storeRef.current) {
-       storeRef.current.setState({
-         project: {
-           id: project.id,
-           name: project.title,
-           resolution: { width: 1920, height: 1080 }, // Default resolution
-           fps: 30, // Default fps
-           duration: 0, // Default duration
-           tracks: [], // Initialize with empty tracks - will be populated by the store
-           mediaAssets: [],
-           createdAt: new Date(project.created_at),
-           updatedAt: new Date(project.updated_at),
-         }
-       });
-     }
+    try {
+      // Update the store with the new project
+      if (storeRef.current) {
+        // Load the project data
+        await storeRef.current.getState().loadProject(project.id);
+        
+        // Clear existing media assets and reload from database
+        storeRef.current.setState(state => ({
+          project: {
+            ...state.project,
+            mediaAssets: []
+          }
+        }));
+        
+        // Load media assets for the video studio
+        const mediaAssets = await MediaAssetService.getUserAssets();
+        
+        // Add media assets to the store
+        mediaAssets.forEach(asset => {
+          storeRef.current?.getState().addMediaAsset(asset);
+        });
+      }
+    } catch (error) {
+      console.error("Failed to open project:", error);
+    } finally {
+      setIsLoading(false);
+    }
   };
   
   if (isLoading) {
