@@ -44,45 +44,29 @@ export class MediaAssetService {
       // Extract file metadata based on type
       const metadata = await this.extractFileMetadata(file);
       
-      onStatusChange?.("Creating temporary URL...");
-      onProgress?.(40);
-
-      // Create temporary blob URL for upload
-      const tempUrl = URL.createObjectURL(file);
-      
       onStatusChange?.("Uploading to cloud storage...");
       onProgress?.(60);
 
-      // Use existing /api/commit-asset endpoint (same as image studios)
-      const payload = {
-        imageTemporaryUrl: tempUrl,
-        originalPrompt: `Media file: ${file.name}`,
-        contentType: file.type,
-        sourceStudio: 'video-studio',
-        userDefinedTitle: file.name.replace(/\.[^/.]+$/, ""), // Remove extension for title
-        userDefinedDescription: `Uploaded media file for video editing`,
-        userDefinedTags: [],
-        generationMetadata: {
-          uploadType: 'direct_upload',
-          originalFileName: file.name,
-          fileSize: file.size,
-          duration: metadata.duration,
-          dimensions: metadata.dimensions,
-          videoMetadata: metadata.videoMetadata
-        }
-      };
+      // Use dedicated video studio upload endpoint with FormData
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('title', file.name.replace(/\.[^/.]+$/, ""));
+      formData.append('description', `Uploaded media file for video editing`);
+      formData.append('sourceStudio', 'video-studio');
+      
+      // Add metadata as JSON string
+      if (metadata.duration) formData.append('duration', metadata.duration.toString());
+      if (metadata.dimensions) formData.append('dimensions', JSON.stringify(metadata.dimensions));
+      if (metadata.videoMetadata) formData.append('videoMetadata', JSON.stringify(metadata.videoMetadata));
 
-      const response = await fetch(`${WORKER_API_URL}/api/commit-asset`, {
+      const response = await fetch(`${WORKER_API_URL}/api/upload-media`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'Authorization': `Bearer ${session.access_token}`
+          // Don't set Content-Type - let browser set it with boundary for FormData
         },
-        body: JSON.stringify(payload)
+        body: formData
       });
-
-      // Clean up temporary URL
-      URL.revokeObjectURL(tempUrl);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -102,9 +86,9 @@ export class MediaAssetService {
       const userAsset: UserAsset = {
         id: result.asset.id,
         user_id: session.user?.id || '',
-        title: result.asset.title || payload.userDefinedTitle,
-        description: payload.userDefinedDescription,
-        tags: payload.userDefinedTags,
+        title: result.asset.title || file.name.replace(/\.[^/.]+$/, ""),
+        description: result.asset.description || `Uploaded media file for video editing`,
+        tags: result.asset.tags || [],
         r2_object_key: result.asset.r2_object_key || '',
         file_name: file.name,
         content_type: file.type,
@@ -207,8 +191,8 @@ export class MediaAssetService {
         return [];
       }
 
-      // Use existing /api/assets endpoint
-      const response = await fetch(`${WORKER_API_URL}/api/assets`, {
+      // Use existing /api/assets endpoint with video studio filter
+      const response = await fetch(`${WORKER_API_URL}/api/assets?source_studio=video-studio`, {
         headers: { 
           'Authorization': `Bearer ${session.access_token}`,
           'Content-Type': 'application/json'
@@ -221,9 +205,8 @@ export class MediaAssetService {
 
       const assets = await response.json();
       
-      // Filter for video studio assets and convert to UserAsset format
+      // Convert to UserAsset format (already filtered by source_studio on server)
       return assets
-        .filter((asset: any) => asset.source_studio === 'video-studio')
         .map((asset: any): UserAsset => ({
           id: asset.id,
           user_id: asset.user_id,
