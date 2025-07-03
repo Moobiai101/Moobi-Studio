@@ -18,7 +18,7 @@ export const getMediaInfo = (asset: UserAsset) => {
   
   return {
     type: isVideo ? 'video' : isAudio ? 'audio' : 'image' as 'video' | 'audio' | 'image',
-    url: MediaAssetService.getAssetUrl(asset.r2_object_key), // Generate proper proxy URL
+    url: VideoProjectService.getAssetUrl(asset), // Use the new storage-aware method
     name: asset.title,
     duration: asset.duration_seconds,
     metadata: {
@@ -555,7 +555,8 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
 
     loadProject: async (projectId) => {
       try {
-        const dbProject = await VideoProjectService.getProject(projectId);
+        // Bypass cache to avoid circular dependency (store -> service -> orchestrator -> cache)
+        const dbProject = await VideoProjectService.getProject(projectId, true);
         
         // Convert database format to store format
         const project: VideoProject = {

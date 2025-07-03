@@ -41,7 +41,7 @@ interface DecodedFrame {
 class IndexedDBCache {
   private db: IDBDatabase | null = null;
   private dbName = 'VideoEditorCache';
-  private version = 1;
+  private version = 2; // Incremented to force upgrade and clear corrupted data
 
   // Store definitions
   private stores = {
@@ -59,6 +59,8 @@ class IndexedDBCache {
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
         this.db = request.result;
+        // Clear any corrupted cache data on initialization
+        this.clearStore('projects').catch(console.warn);
         resolve();
       };
 
@@ -88,7 +90,8 @@ class IndexedDBCache {
 
         // Project cache store
         if (!db.objectStoreNames.contains(this.stores.projects)) {
-          const projectStore = db.createObjectStore(this.stores.projects, { keyPath: 'projectId' });
+          const projectStore = db.createObjectStore(this.stores.projects, { keyPath: 'id' });
+          projectStore.createIndex('projectId', 'projectId', { unique: true });
           projectStore.createIndex('lastModified', 'lastModified', { unique: false });
         }
 
@@ -217,19 +220,22 @@ class IndexedDBCache {
   async cacheProject(projectCache: ProjectCache): Promise<void> {
     if (!this.db) throw new Error('Database not initialized');
 
-    const entry: CacheEntry<ProjectCache> = {
-      id: projectCache.projectId,
+    const cacheEntry = {
+      id: `cache_${projectCache.projectId}`, // Use a unique cache ID
+      projectId: projectCache.projectId,
       data: projectCache,
+      lastModified: projectCache.lastModified,
       timestamp: Date.now()
     };
 
-    return this.putData(this.stores.projects, entry);
+    return this.putData(this.stores.projects, cacheEntry);
   }
 
   async getCachedProject(projectId: string): Promise<ProjectCache | null> {
     if (!this.db) return null;
 
-    const entry = await this.getData<ProjectCache>(this.stores.projects, projectId);
+    const cacheId = `cache_${projectId}`;
+    const entry = await this.getData<any>(this.stores.projects, cacheId);
     return entry?.data || null;
   }
 
