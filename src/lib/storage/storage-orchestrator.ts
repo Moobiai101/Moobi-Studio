@@ -401,6 +401,33 @@ export class StorageOrchestrator {
   // === DEVICE CAPABILITIES ===
 
   async detectDeviceCapabilities(): Promise<any> {
+    // Check if we're in a browser environment
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+      // Server-side defaults
+      return {
+        capabilities: {
+          webassembly_supported: false,
+          simd_supported: false,
+          memory_gb: 4,
+          cpu_cores: 4,
+          gpu_acceleration: false,
+          max_video_resolution: '1080p',
+          supported_codecs: ['h264', 'vp8', 'vp9']
+        },
+        performance_profile: {
+          benchmark_score: 5,
+          recommended_quality: 'medium',
+          max_concurrent_jobs: 2,
+          cache_size_mb: 200
+        },
+        browser_info: {
+          name: 'Unknown',
+          version: 'unknown',
+          features_supported: []
+        }
+      };
+    }
+
     const capabilities = {
       webassembly_supported: typeof WebAssembly !== 'undefined',
       simd_supported: false, // Will be detected in Phase 2

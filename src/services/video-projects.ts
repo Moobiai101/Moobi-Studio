@@ -70,7 +70,7 @@ export class VideoProjectService {
         enabled: true,
         processing_quality: 'medium',
         use_simd: false, // Will be detected in Phase 2
-        worker_threads: Math.min(navigator.hardwareConcurrency || 4, 4),
+        worker_threads: Math.min(typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 4) : 4, 4),
         memory_limit_mb: 512,
         cache_strategy: 'balanced'
       },

@@ -24,7 +24,10 @@ export function StorageInitializer({ children, onInitialized }: StorageInitProps
   });
 
   useEffect(() => {
-    initializeStorage();
+    // Only initialize storage in browser environment
+    if (typeof window !== 'undefined') {
+      initializeStorage();
+    }
   }, []);
 
   const initializeStorage = async () => {
@@ -139,8 +142,8 @@ export function StorageInitializer({ children, onInitialized }: StorageInitProps
           
           {/* Device detection info */}
           <div className="text-xs text-muted-foreground space-y-1">
-            <div>🧠 Detecting CPU cores: {navigator.hardwareConcurrency || 'Unknown'}</div>
-            <div>💾 Memory estimate: {(navigator as any).deviceMemory || 'Unknown'}GB</div>
+            <div>🧠 Detecting CPU cores: {typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency || 'Unknown') : 'Unknown'}</div>
+            <div>💾 Memory estimate: {typeof navigator !== 'undefined' ? ((navigator as any).deviceMemory || 'Unknown') : 'Unknown'}GB</div>
             <div>⚡ WebAssembly: {typeof WebAssembly !== 'undefined' ? 'Supported' : 'Not supported'}</div>
           </div>
         </div>
