@@ -329,7 +329,7 @@ class WasmThumbnailGenerator {
   }
 
   // Clean up resources
-  async cleanup(): void {
+  async cleanup(): Promise<void> {
     if (this.ffmpeg) {
       // Remove all loaded videos from virtual filesystem
       for (const [assetId, fileName] of this.loadedAssets) {
