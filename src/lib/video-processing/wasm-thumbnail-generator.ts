@@ -8,7 +8,19 @@ import { storageOrchestrator } from '@/lib/storage/storage-orchestrator';
 
 // Singleton FFmpeg instance
 let ffmpegInstance: FFmpeg | null = null;
-let ffmpegLoadPromise: Promise<void> | null = null;
+let ffmpegLoadPromise: Promise<boolean> | null = null;
+
+// Feature detection and fallback management
+let isWebAssemblySupported = false;
+let initializationFailed = false;
+
+// Check WebAssembly support
+try {
+  isWebAssemblySupported = typeof WebAssembly !== 'undefined' && 
+                          typeof WebAssembly.instantiate === 'function';
+} catch (error) {
+  console.warn('WebAssembly not supported:', error);
+}
 
 // Thumbnail generation queue for efficient processing
 interface ThumbnailRequest {
@@ -28,6 +40,8 @@ class WasmThumbnailGenerator {
   private processingQueue: ThumbnailRequest[] = [];
   private isProcessing = false;
   private loadedAssets: Map<string, string> = new Map(); // Cache loaded video URLs
+  private initializationAttempts = 0;
+  private maxInitializationAttempts = 3;
 
   private constructor() {}
 
@@ -38,19 +52,30 @@ class WasmThumbnailGenerator {
     return WasmThumbnailGenerator.instance;
   }
 
-  // Initialize FFmpeg.wasm
-  async initialize(): Promise<void> {
-    if (this.ffmpeg) return;
+  // Check if WebAssembly processing is available
+  isAvailable(): boolean {
+    return isWebAssemblySupported && !initializationFailed && this.ffmpeg !== null;
+  }
+
+  // Initialize FFmpeg.wasm with multiple fallback strategies
+  async initialize(): Promise<boolean> {
+    if (this.ffmpeg) return true;
+    if (initializationFailed) return false;
     if (this.isLoading) {
-      await ffmpegLoadPromise;
-      return;
+      const result = await ffmpegLoadPromise;
+      return result || false;
     }
 
     this.isLoading = true;
-    
+    this.initializationAttempts++;
+
     try {
       console.log('🎬 Initializing WebAssembly video processor...');
       
+      if (!isWebAssemblySupported) {
+        throw new Error('WebAssembly not supported in this environment');
+      }
+
       this.ffmpeg = new FFmpeg();
       
       // Configure FFmpeg for optimal performance
@@ -61,32 +86,64 @@ class WasmThumbnailGenerator {
       });
 
       this.ffmpeg.on('progress', ({ progress, time }) => {
-        // Progress tracking for long operations
         if (process.env.NODE_ENV === 'development') {
           console.log(`Processing: ${(progress * 100).toFixed(1)}% (${time}ms)`);
         }
       });
 
-      // Load FFmpeg WebAssembly files
-      const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
-      
-      ffmpegLoadPromise = this.ffmpeg.load({
-        coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-        wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-      }).then(() => {}); // Convert Promise<boolean> to Promise<void>
+      // Simplified CDN fallback strategy for better reliability
+      const cdnUrls = [
+        'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
+        'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',
+      ];
 
-      await ffmpegLoadPromise;
-      
-      console.log('✅ WebAssembly video processor ready!');
-      
+      let loadSuccess = false;
+      let lastError: Error | null = null;
+
+      for (const baseURL of cdnUrls) {
+        try {
+          console.log(`🎬 Attempting to load FFmpeg from: ${baseURL}`);
+          
+          // Simplified loading without worker URL to avoid cross-origin issues
+          ffmpegLoadPromise = this.ffmpeg.load({
+            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+          });
+
+          const result = await ffmpegLoadPromise;
+          loadSuccess = true;
+          console.log('✅ WebAssembly video processor ready!');
+          break;
+          
+        } catch (error) {
+          lastError = error as Error;
+          console.warn(`Failed to load from ${baseURL}:`, error);
+          continue;
+        }
+      }
+
+      if (!loadSuccess) {
+        throw lastError || new Error('Failed to load FFmpeg from all CDNs');
+      }
+
       // Start processing queue
       this.startQueueProcessor();
+      this.isLoading = false;
+      
+      return true;
       
     } catch (error) {
-      console.error('Failed to initialize FFmpeg:', error);
+      console.error('Failed to initialize FFmpeg after', this.initializationAttempts, 'attempts:', error);
+      
+      // Always mark as failed to prevent further attempts
+      initializationFailed = true;
+      console.warn('🚫 WebAssembly thumbnail generation permanently disabled - using placeholder images');
+      
       this.isLoading = false;
       this.ffmpeg = null;
-      throw error;
+      ffmpegLoadPromise = null;
+      
+      return false;
     }
   }
 
@@ -101,6 +158,11 @@ class WasmThumbnailGenerator {
       quality?: 'low' | 'medium' | 'high';
     } = {}
   ): Promise<Blob> {
+    // Early return if WebAssembly is not available
+    if (!isWebAssemblySupported || initializationFailed) {
+      throw new Error('WebAssembly thumbnail generation not available');
+    }
+
     const { 
       width = 160, 
       height = 90, 
@@ -112,6 +174,12 @@ class WasmThumbnailGenerator {
     if (cachedThumbnail) {
       console.log(`📸 Thumbnail cache hit: ${assetId} @ ${timestamp}s`);
       return cachedThumbnail.blob;
+    }
+
+    // Try to initialize if not already done
+    const initialized = await this.initialize();
+    if (!initialized) {
+      throw new Error('Failed to initialize WebAssembly video processor');
     }
 
     // Add to processing queue
@@ -136,14 +204,26 @@ class WasmThumbnailGenerator {
   // Load video asset into FFmpeg virtual filesystem
   private async loadVideoAsset(assetId: string, videoUrl: string): Promise<void> {
     if (!this.ffmpeg) {
-      await this.initialize();
+      const initialized = await this.initialize();
+      if (!initialized) {
+        throw new Error('Failed to initialize FFmpeg');
+      }
     }
 
     try {
       console.log(`📥 Loading video asset: ${assetId}`);
       
-      // Fetch video data
-      const response = await fetch(videoUrl);
+      // Fetch video data with proper headers
+      const response = await fetch(videoUrl, {
+        headers: {
+          'Accept': 'video/*',
+        },
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch video: ${response.status} ${response.statusText}`);
+      }
+      
       const videoData = await response.arrayBuffer();
       
       // Write to FFmpeg virtual filesystem
@@ -151,7 +231,7 @@ class WasmThumbnailGenerator {
       await this.ffmpeg!.writeFile(fileName, new Uint8Array(videoData));
       
       this.loadedAssets.set(assetId, fileName);
-      console.log(`✅ Video loaded: ${assetId}`);
+      console.log(`✅ Video loaded: ${assetId} (${(videoData.byteLength / 1024 / 1024).toFixed(2)}MB)`);
       
       // Process any pending requests for this asset
       this.processQueue();
@@ -257,7 +337,7 @@ class WasmThumbnailGenerator {
   ): Promise<Blob> {
     if (!this.ffmpeg) throw new Error('FFmpeg not initialized');
 
-    const outputFile = `thumb_${Date.now()}.jpg`;
+    const outputFile = `thumb_${Date.now()}_${Math.random().toString(36).substr(2, 9)}.jpg`;
     
     // Quality settings
     const qualityMap = {
@@ -278,6 +358,7 @@ class WasmThumbnailGenerator {
         '-vframes', '1',
         '-vf', `scale=${scaledWidth}:${scaledHeight}`,
         '-q:v', qscale.toString(),
+        '-y', // Overwrite output file
         outputFile
       ]);
 
@@ -292,6 +373,12 @@ class WasmThumbnailGenerator {
       
     } catch (error) {
       console.error('Frame extraction failed:', error);
+      // Clean up on error
+      try {
+        await this.ffmpeg.deleteFile(outputFile);
+      } catch (cleanupError) {
+        // Ignore cleanup errors
+      }
       throw error;
     }
   }
@@ -308,6 +395,10 @@ class WasmThumbnailGenerator {
       quality?: 'low' | 'medium' | 'high';
     } = {}
   ): Promise<Blob[]> {
+    if (!isWebAssemblySupported || initializationFailed) {
+      throw new Error('WebAssembly thumbnail generation not available');
+    }
+
     const { 
       count = 10, 
       width = 160, 
@@ -348,13 +439,17 @@ class WasmThumbnailGenerator {
   // Get processing status
   getStatus(): {
     isReady: boolean;
+    isAvailable: boolean;
     queueLength: number;
     loadedAssets: number;
+    initializationFailed: boolean;
   } {
     return {
       isReady: !!this.ffmpeg && !this.isLoading,
+      isAvailable: this.isAvailable(),
       queueLength: this.processingQueue.length,
-      loadedAssets: this.loadedAssets.size
+      loadedAssets: this.loadedAssets.size,
+      initializationFailed
     };
   }
 }

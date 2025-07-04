@@ -38,9 +38,9 @@ export default function VideoStudioPage() {
   return (
     <Suspense fallback={<VideoStudioLoading />}>
       <StorageInitializer>
-        <VideoProjectProvider>
-          <VideoEditor />
-        </VideoProjectProvider>
+    <VideoProjectProvider>
+      <VideoEditor />
+    </VideoProjectProvider>
         
         {/* Development-only storage monitoring */}
         {typeof window !== 'undefined' && process.env.NODE_ENV === 'development' && <StorageStatus />}

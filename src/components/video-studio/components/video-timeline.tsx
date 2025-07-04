@@ -118,7 +118,7 @@ function VideoClip({
         clipWidth,
         {
           priority: isSelected ? 'high' : 'normal',
-          frameCount: optimalFrameCount,
+            frameCount: optimalFrameCount,
           quality: 'low', // Low quality for timeline thumbnails
           assetId: clip.asset.id,
           trimStart: clip.trimStart,
@@ -303,7 +303,7 @@ function OverlayClip({
         clipWidth,
         {
           priority: isSelected ? 'high' : 'normal',
-          frameCount: optimalFrameCount,
+            frameCount: optimalFrameCount,
           quality: 'low', // Low quality for timeline thumbnails
           assetId: clip.asset.id,
           trimStart: clip.trimStart,

@@ -157,21 +157,21 @@ export class VideoProjectService {
     
     // If bypassing cache, go directly to Supabase
     if (bypassCache) {
-      const { data, error } = await supabase
-        .from('video_editor_projects')
-        .select('*')
-        .eq('id', projectId)
-        .single();
+    const { data, error } = await supabase
+      .from('video_editor_projects')
+      .select('*')
+      .eq('id', projectId)
+      .single();
 
-      if (error) throw error;
+    if (error) throw error;
       if (!data) throw new Error('Project not found');
       
       // Update last opened timestamp
       await this.updateLastOpened(projectId);
       
-      return data;
-    }
-    
+    return data;
+  }
+
     const project = await storageOrchestrator.loadProject(projectId);
     if (!project) {
       throw new Error('Project not found');

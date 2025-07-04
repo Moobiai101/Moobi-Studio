@@ -293,7 +293,7 @@ export interface DeviceCapabilities {
 
 // Supabase response types
 export type VideoProjectRow = VideoEditorProject;
-export type UserAssetRow = UserAsset;
+export type UserAssetRow = UserAsset; 
 export type ExportHistoryRow = ExportHistory;
 export type ProcessingJobRow = ProcessingJob;
 export type DeviceCapabilitiesRow = DeviceCapabilities; 

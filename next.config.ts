@@ -60,12 +60,36 @@ const nextConfig: NextConfig = {
         hostname: 'my-ai-worker.khansameersam96.workers.dev',
         pathname: '/api/media/**',
       },
+      // Add CDN domains for FFmpeg
+      {
+        protocol: 'https',
+        hostname: 'unpkg.com',
+        pathname: '/@ffmpeg/core@*/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'cdn.jsdelivr.net',
+        pathname: '/npm/@ffmpeg/core@*/**',
+      },
     ],
   },
   // Configure which output files to include/exclude in the deployment
   distDir: 'dist',
   // Clean webpack output and avoid caching
   webpack: (config, { dev, isServer }) => {
+    // Enable WebAssembly support
+    config.experiments = {
+      ...config.experiments,
+      asyncWebAssembly: true,
+      layers: true,
+    };
+
+    // Add rule for WebAssembly files
+    config.module.rules.push({
+      test: /\.wasm$/,
+      type: 'webassembly/async',
+    });
+
     // Clean webpack output
     if (!dev && !isServer) {
       config.optimization = {
@@ -74,12 +98,30 @@ const nextConfig: NextConfig = {
         splitChunks: {
           chunks: 'all',
           maxSize: 20000000, // 20MB max chunks
+          cacheGroups: {
+            // Separate chunk for FFmpeg
+            ffmpeg: {
+              test: /[\\/]node_modules[\\/]@ffmpeg[\\/]/,
+              name: 'ffmpeg',
+              chunks: 'all',
+              priority: 10,
+            },
+          },
         }
       };
       
       // Disable file caching
       config.cache = false;
     }
+
+    // Handle FFmpeg specific configurations
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      fs: false,
+      path: false,
+      crypto: false,
+    };
+
     return config;
   },
   // Explicitly set these to false to prevent caching issues
