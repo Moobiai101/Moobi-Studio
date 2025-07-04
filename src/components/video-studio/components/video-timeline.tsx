@@ -118,11 +118,15 @@ function VideoClip({
         clipWidth,
         {
           priority: isSelected ? 'high' : 'normal',
+          config: {
+            frameWidth: PROFESSIONAL_FRAME_WIDTH,
+            frameHeight: PROFESSIONAL_FRAME_HEIGHT,
             frameCount: optimalFrameCount,
-          quality: 'low', // Low quality for timeline thumbnails
-          assetId: clip.asset.id,
-          trimStart: clip.trimStart,
-          trimEnd: clip.trimEnd
+            quality: PROFESSIONAL_QUALITY,
+            layout: 'horizontal',
+            sourceStartTime: clip.trimStart, // Start time of the segment within the asset
+            sourceDuration: clip.trimEnd - clip.trimStart // Duration of the segment from the asset
+          }
         }
       );
     }
@@ -303,11 +307,15 @@ function OverlayClip({
         clipWidth,
         {
           priority: isSelected ? 'high' : 'normal',
+          config: {
+            frameWidth: PROFESSIONAL_FRAME_WIDTH,
+            frameHeight: PROFESSIONAL_FRAME_HEIGHT,
             frameCount: optimalFrameCount,
-          quality: 'low', // Low quality for timeline thumbnails
-          assetId: clip.asset.id,
-          trimStart: clip.trimStart,
-          trimEnd: clip.trimEnd
+            quality: PROFESSIONAL_QUALITY,
+            layout: 'horizontal',
+            sourceStartTime: clip.trimStart, // Start time of the segment within the asset
+            sourceDuration: clip.trimEnd - clip.trimStart // Duration of the segment from the asset
+          }
         }
       );
     }

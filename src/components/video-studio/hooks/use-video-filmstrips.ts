@@ -1,216 +1,41 @@
 import React, { useState, useEffect, useCallback, useRef, createContext, useContext } from 'react';
-import { thumbnailGenerator } from '@/lib/video-processing/wasm-thumbnail-generator';
-import { storageOrchestrator } from '@/lib/storage/storage-orchestrator';
+import { 
+  createCachedVideoFilmstrip, 
+  type FilmstripConfig,
+  DEFAULT_FILMSTRIP_CONFIG 
+} from '../lib/media-utils';
 
 interface VideoFilmstripState {
   filmstrip: string | null;
   isLoading: boolean;
   error: string | null;
-  isUsingWebAssembly: boolean;
 }
 
 interface UseVideoFilmstripsOptions {
-  frameCount?: number;
+  config?: Partial<FilmstripConfig>;
   enabled?: boolean;
   priority?: 'high' | 'normal' | 'low';
-  quality?: 'low' | 'medium' | 'high';
 }
 
 /**
- * Hook for managing video filmstrips using WebAssembly with fallback
- * Eliminates server requests and provides instant cached thumbnails
+ * Hook for managing video filmstrips in timeline clips
+ * Implements professional video editor loading strategies
  */
 export function useVideoFilmstrips() {
   const [filmstrips, setFilmstrips] = useState<Map<string, VideoFilmstripState>>(new Map());
-  const [isWebAssemblyReady, setIsWebAssemblyReady] = useState(false);
-  const [webAssemblyFailed, setWebAssemblyFailed] = useState(false);
-  const loadingQueue = useRef<Array<{ 
-    clipId: string; 
-    assetId: string;
-    url: string; 
-    clipDuration: number; 
-    clipWidth: number; 
-    trimStart: number;
-    trimEnd: number;
-    options: UseVideoFilmstripsOptions 
-  }>>([]);
+  const loadingQueue = useRef<Array<{ clipId: string; url: string; clipDuration: number; clipWidth: number; options: UseVideoFilmstripsOptions }>>([]);
   const isProcessing = useRef(false);
-  const filmstripCanvases = useRef<Map<string, HTMLCanvasElement>>(new Map());
-  const initializationTimeout = useRef<NodeJS.Timeout | null>(null);
-  
-  // Initialize WebAssembly thumbnail generator with timeout
-  useEffect(() => {
-    let isMounted = true;
-    
-    const initializeWebAssembly = async () => {
-      try {
-        console.log('🎬 Initializing WebAssembly video processing...');
-        
-        // Set a timeout for initialization
-        initializationTimeout.current = setTimeout(() => {
-          if (isMounted) {
-            console.warn('⚠️ WebAssembly initialization timed out - using server-based processing');
-            setWebAssemblyFailed(true);
-            setIsWebAssemblyReady(false);
-          }
-        }, 15000); // 15 second timeout
-        
-        const initialized = await thumbnailGenerator.initialize();
-        
-        if (initializationTimeout.current) {
-          clearTimeout(initializationTimeout.current);
-          initializationTimeout.current = null;
-        }
-        
-        if (isMounted) {
-          if (initialized) {
-            console.log('✅ WebAssembly video processing ready!');
-            setIsWebAssemblyReady(true);
-            setWebAssemblyFailed(false);
-          } else {
-            console.warn('🚫 WebAssembly initialization failed - using server-based processing');
-            setWebAssemblyFailed(true);
-            setIsWebAssemblyReady(false);
-          }
-        }
-      } catch (error) {
-        if (initializationTimeout.current) {
-          clearTimeout(initializationTimeout.current);
-          initializationTimeout.current = null;
-        }
-        
-        if (isMounted) {
-          console.error('Failed to initialize WebAssembly:', error);
-          setWebAssemblyFailed(true);
-          setIsWebAssemblyReady(false);
-        }
-      }
-    };
-    
-    initializeWebAssembly();
-    
-    return () => {
-      isMounted = false;
-      if (initializationTimeout.current) {
-        clearTimeout(initializationTimeout.current);
-        initializationTimeout.current = null;
-      }
-    };
-  }, []);
   
   // Get filmstrip state for a specific clip
   const getFilmstripState = useCallback((clipId: string): VideoFilmstripState => {
     return filmstrips.get(clipId) || {
       filmstrip: null,
       isLoading: false,
-      error: null,
-      isUsingWebAssembly: false
+      error: null
     };
   }, [filmstrips]);
   
-  // Generate filmstrip using server-based processing (fallback)
-  const generateServerFilmstrip = useCallback(async (
-    clipId: string, 
-    url: string, 
-    clipDuration: number, 
-    clipWidth: number, 
-    trimStart: number, 
-    trimEnd: number,
-    options: UseVideoFilmstripsOptions
-  ) => {
-    try {
-      console.log(`🖥️ Generating placeholder filmstrip for clip ${clipId} (WebAssembly not available)`);
-      
-      // Calculate frame count and dimensions
-      const frameWidth = 60;
-      const frameHeight = 34;
-      const frameCount = options.frameCount || Math.max(3, Math.min(20, Math.floor(clipWidth / frameWidth)));
-      
-      // Create a placeholder filmstrip canvas
-      const canvas = document.createElement('canvas');
-      canvas.width = frameWidth * frameCount;
-      canvas.height = frameHeight;
-      const ctx = canvas.getContext('2d');
-      
-      if (!ctx) throw new Error('Canvas context not available');
-      
-      // Create professional-looking placeholder frames
-      for (let i = 0; i < frameCount; i++) {
-        const x = i * frameWidth;
-        
-        // Create gradient background for each frame
-        const gradient = ctx.createLinearGradient(x, 0, x + frameWidth, frameHeight);
-        gradient.addColorStop(0, '#2563eb');
-        gradient.addColorStop(0.5, '#1d4ed8');
-        gradient.addColorStop(1, '#1e40af');
-        
-        ctx.fillStyle = gradient;
-        ctx.fillRect(x, 0, frameWidth, frameHeight);
-        
-        // Add frame border
-        ctx.strokeStyle = '#1e40af';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(x, 0, frameWidth, frameHeight);
-        
-        // Add play icon in center of frame
-        const centerX = x + frameWidth / 2;
-        const centerY = frameHeight / 2;
-        const iconSize = 8;
-        
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-        ctx.beginPath();
-        ctx.moveTo(centerX - iconSize/2, centerY - iconSize/2);
-        ctx.lineTo(centerX + iconSize/2, centerY);
-        ctx.lineTo(centerX - iconSize/2, centerY + iconSize/2);
-        ctx.closePath();
-        ctx.fill();
-        
-        // Add timestamp text
-        const timestamp = trimStart + (i * (trimEnd - trimStart) / frameCount);
-        const minutes = Math.floor(timestamp / 60);
-        const seconds = Math.floor(timestamp % 60);
-        const timeText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
-        
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-        ctx.font = '8px Arial';
-        ctx.textAlign = 'center';
-        ctx.fillText(timeText, centerX, centerY + 12);
-      }
-      
-      // Add overall label
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.font = 'bold 10px Arial';
-      ctx.textAlign = 'center';
-      ctx.fillText('No WebAssembly', canvas.width / 2, 12);
-      
-      const filmstripDataUrl = canvas.toDataURL('image/jpeg', 0.8);
-      
-      // Store canvas for reuse
-      filmstripCanvases.current.set(clipId, canvas);
-      
-      // Update state with filmstrip
-      setFilmstrips(prev => new Map(prev).set(clipId, {
-        filmstrip: filmstripDataUrl,
-        isLoading: false,
-        error: null,
-        isUsingWebAssembly: false
-      }));
-      
-      console.log(`✅ Placeholder filmstrip generated for clip ${clipId} - 0 network requests`);
-      
-    } catch (error) {
-      console.error(`Failed to generate placeholder filmstrip for clip ${clipId}:`, error);
-      
-      setFilmstrips(prev => new Map(prev).set(clipId, {
-        filmstrip: null,
-        isLoading: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        isUsingWebAssembly: false
-      }));
-    }
-  }, []);
-  
-  // Process the loading queue with WebAssembly
+  // Process the loading queue
   const processQueue = useCallback(async () => {
     if (isProcessing.current || loadingQueue.current.length === 0) {
       return;
@@ -218,155 +43,59 @@ export function useVideoFilmstrips() {
     
     isProcessing.current = true;
     
-    // Sort queue by priority
+    // Sort queue by priority (high -> normal -> low)
     loadingQueue.current.sort((a, b) => {
       const priorityOrder = { high: 0, normal: 1, low: 2 };
       return priorityOrder[a.options.priority || 'normal'] - priorityOrder[b.options.priority || 'normal'];
     });
     
-    // Process one item at a time
+    // Process one item at a time to prevent browser overload
     const item = loadingQueue.current.shift();
     if (!item) {
       isProcessing.current = false;
       return;
     }
     
-    const { clipId, assetId, url, clipDuration, clipWidth, trimStart, trimEnd, options } = item;
+    const { clipId, url, clipDuration, clipWidth, options } = item;
     
     try {
       // Update state to loading
       setFilmstrips(prev => new Map(prev).set(clipId, {
         filmstrip: null,
         isLoading: true,
-        error: null,
-        isUsingWebAssembly: isWebAssemblyReady
+        error: null
       }));
       
-      // Check if we should use WebAssembly or fallback to server
-      if (isWebAssemblyReady && !webAssemblyFailed) {
-        try {
-          // Try WebAssembly processing
-          await processWebAssemblyFilmstrip(clipId, assetId, url, clipDuration, clipWidth, trimStart, trimEnd, options);
-        } catch (wasmError) {
-          console.warn(`WebAssembly processing failed for ${clipId}, falling back to server:`, wasmError);
-          // Fall back to server processing
-          await generateServerFilmstrip(clipId, url, clipDuration, clipWidth, trimStart, trimEnd, options);
-        }
-      } else {
-        // Use server-based processing
-        await generateServerFilmstrip(clipId, url, clipDuration, clipWidth, trimStart, trimEnd, options);
-      }
+      // Generate filmstrip
+      const filmstrip = await createCachedVideoFilmstrip(
+        url,
+        clipDuration,
+        clipWidth,
+        options.config
+      );
+      
+      // Update state with filmstrip
+      setFilmstrips(prev => new Map(prev).set(clipId, {
+        filmstrip,
+        isLoading: false,
+        error: null
+      }));
       
     } catch (error) {
-      console.error(`Failed to process filmstrip for clip ${clipId}:`, error);
+      console.warn(`Failed to generate filmstrip for clip ${clipId}:`, error);
       
       // Update state with error
       setFilmstrips(prev => new Map(prev).set(clipId, {
         filmstrip: null,
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-        isUsingWebAssembly: false
+        error: error instanceof Error ? error.message : 'Unknown error'
       }));
     }
     
     isProcessing.current = false;
     
     // Continue processing queue
-    setTimeout(() => processQueue(), 100);
-  }, [isWebAssemblyReady, webAssemblyFailed, generateServerFilmstrip]);
-  
-  // Process filmstrip using WebAssembly
-  const processWebAssemblyFilmstrip = useCallback(async (
-    clipId: string, 
-    assetId: string, 
-    url: string, 
-    clipDuration: number, 
-    clipWidth: number, 
-    trimStart: number, 
-    trimEnd: number,
-    options: UseVideoFilmstripsOptions
-  ) => {
-    // Calculate frame count based on clip width
-    const frameWidth = 60;
-    const frameHeight = 34;
-    const frameCount = options.frameCount || Math.max(3, Math.min(20, Math.floor(clipWidth / frameWidth)));
-    
-    // Calculate timestamps for frames
-    const effectiveDuration = (trimEnd - trimStart) || clipDuration;
-    const interval = effectiveDuration / frameCount;
-    const timestamps: number[] = [];
-    
-    for (let i = 0; i < frameCount; i++) {
-      const timeInClip = i * interval;
-      const actualTime = trimStart + timeInClip;
-      timestamps.push(actualTime);
-    }
-    
-    console.log(`🎬 Generating ${frameCount} WebAssembly thumbnails for clip ${clipId}`);
-    
-    // Generate thumbnails with WebAssembly
-    const thumbnailPromises = timestamps.map(timestamp =>
-      thumbnailGenerator.generateThumbnail(assetId, url, timestamp, {
-        width: frameWidth,
-        height: frameHeight,
-        quality: options.quality || 'low'
-      })
-    );
-    
-    const thumbnailBlobs = await Promise.all(thumbnailPromises);
-    
-    // Create filmstrip canvas
-    const canvas = document.createElement('canvas');
-    canvas.width = frameWidth * frameCount;
-    canvas.height = frameHeight;
-    const ctx = canvas.getContext('2d');
-    
-    if (!ctx) throw new Error('Canvas context not available');
-    
-    // Draw all thumbnails onto the filmstrip
-    let loadedCount = 0;
-    const images: HTMLImageElement[] = [];
-    
-    await Promise.all(thumbnailBlobs.map((blob, index) => {
-      return new Promise<void>((resolve, reject) => {
-        const img = new Image();
-        const url = URL.createObjectURL(blob);
-        
-        img.onload = () => {
-          images[index] = img;
-          loadedCount++;
-          
-          // Draw image at correct position
-          ctx.drawImage(img, index * frameWidth, 0, frameWidth, frameHeight);
-          
-          // Clean up
-          URL.revokeObjectURL(url);
-          
-          if (loadedCount === frameCount) {
-            // All images loaded, convert canvas to data URL
-            const filmstripDataUrl = canvas.toDataURL('image/jpeg', 0.7);
-            
-            // Store canvas for reuse
-            filmstripCanvases.current.set(clipId, canvas);
-            
-            // Update state with filmstrip
-            setFilmstrips(prev => new Map(prev).set(clipId, {
-              filmstrip: filmstripDataUrl,
-              isLoading: false,
-              error: null,
-              isUsingWebAssembly: true
-            }));
-          }
-          
-          resolve();
-        };
-        
-        img.onerror = () => reject(new Error(`Failed to load thumbnail ${index}`));
-        img.src = url;
-      });
-    }));
-    
-    console.log(`✅ WebAssembly filmstrip generated for clip ${clipId} - 0 server requests!`);
+    setTimeout(() => processQueue(), 100); // Small delay to prevent blocking
   }, []);
   
   // Request filmstrip for a clip
@@ -375,11 +104,7 @@ export function useVideoFilmstrips() {
     url: string,
     clipDuration: number,
     clipWidth: number,
-    options: UseVideoFilmstripsOptions & {
-      assetId?: string;
-      trimStart?: number;
-      trimEnd?: number;
-    } = {}
+    options: UseVideoFilmstripsOptions = {}
   ) => {
     const currentState = filmstrips.get(clipId);
     
@@ -399,18 +124,12 @@ export function useVideoFilmstrips() {
       return;
     }
     
-    // Extract asset ID from URL if not provided
-    const assetId = options.assetId || extractAssetIdFromUrl(url);
-    
     // Add to queue
     loadingQueue.current.push({
       clipId,
-      assetId,
       url,
       clipDuration,
       clipWidth,
-      trimStart: options.trimStart || 0,
-      trimEnd: options.trimEnd || clipDuration,
       options
     });
     
@@ -428,22 +147,15 @@ export function useVideoFilmstrips() {
     
     // Remove from queue if present
     loadingQueue.current = loadingQueue.current.filter(item => item.clipId !== clipId);
-    
-    // Clean up canvas
-    const canvas = filmstripCanvases.current.get(clipId);
-    if (canvas) {
-      filmstripCanvases.current.delete(clipId);
-    }
   }, []);
   
   // Clear all filmstrips
   const clearAllFilmstrips = useCallback(() => {
     setFilmstrips(new Map());
     loadingQueue.current = [];
-    filmstripCanvases.current.clear();
   }, []);
   
-  // Get filmstrip URL for a clip
+  // Get filmstrip URL for a clip (convenience method)
   const getFilmstrip = useCallback((clipId: string): string | null => {
     return filmstrips.get(clipId)?.filmstrip || null;
   }, [filmstrips]);
@@ -458,18 +170,12 @@ export function useVideoFilmstrips() {
     return filmstrips.get(clipId)?.error || null;
   }, [filmstrips]);
   
-  // Check if using WebAssembly for a clip
-  const isUsingWebAssembly = useCallback((clipId: string): boolean => {
-    return filmstrips.get(clipId)?.isUsingWebAssembly || false;
-  }, [filmstrips]);
-  
   return {
     // State accessors
     getFilmstripState,
     getFilmstrip,
     isLoadingFilmstrip,
     getFilmstripError,
-    isUsingWebAssembly,
     
     // Actions
     requestFilmstrip,
@@ -478,24 +184,44 @@ export function useVideoFilmstrips() {
     
     // Queue info
     queueLength: loadingQueue.current.length,
-    isProcessingQueue: isProcessing.current,
-    
-    // WebAssembly status
-    isWebAssemblyReady,
-    webAssemblyFailed
+    isProcessingQueue: isProcessing.current
   };
 }
 
-// Helper function to extract asset ID from URL
-function extractAssetIdFromUrl(url: string): string {
-  // Extract from URL pattern like: /api/media?key=user_files_xxx
-  const match = url.match(/user_files_([^&\/]+)/);
-  if (match) {
-    return match[1];
-  }
+/**
+ * Hook for a single video clip filmstrip
+ * Simpler interface for individual clips
+ */
+export function useVideoFilmstrip(
+  clipId: string,
+  url: string,
+  clipDuration: number,
+  clipWidth: number,
+  options: UseVideoFilmstripsOptions = {}
+) {
+  const filmstripsManager = useVideoFilmstrips();
   
-  // Fallback: use URL as ID
-  return url;
+  // Request filmstrip when dependencies change
+  useEffect(() => {
+    if (url && clipDuration > 0 && clipWidth > 0) {
+      filmstripsManager.requestFilmstrip(clipId, url, clipDuration, clipWidth, options);
+    }
+  }, [clipId, url, clipDuration, clipWidth, options.enabled, filmstripsManager]);
+  
+  // Cleanup when unmounting
+  useEffect(() => {
+    return () => {
+      filmstripsManager.clearFilmstrip(clipId);
+    };
+  }, [clipId, filmstripsManager]);
+  
+  const state = filmstripsManager.getFilmstripState(clipId);
+  
+  return {
+    filmstrip: state.filmstrip,
+    isLoading: state.isLoading,
+    error: state.error
+  };
 }
 
 /**

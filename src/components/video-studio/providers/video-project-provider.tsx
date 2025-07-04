@@ -58,7 +58,7 @@ export function VideoProjectProvider({
         await storeRef.current.getState().loadProject(project.id);
         
         // Load media assets for the video studio
-        const mediaAssets = await VideoProjectService.getUserVideoAssets();
+        const mediaAssets = await MediaAssetService.getUserAssets();
         
         // Add media assets to the store
         mediaAssets.forEach(asset => {
@@ -100,7 +100,7 @@ export function VideoProjectProvider({
         }));
         
         // Load media assets for the video studio
-        const mediaAssets = await VideoProjectService.getUserVideoAssets();
+        const mediaAssets = await MediaAssetService.getUserAssets();
         
         // Add media assets to the store
         mediaAssets.forEach(asset => {
