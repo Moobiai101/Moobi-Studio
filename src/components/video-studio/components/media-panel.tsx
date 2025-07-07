@@ -26,16 +26,18 @@ import { formatTime } from "../lib/utils";
 import { getMediaInfo } from "../store/video-project-store";
 import { MediaAssetService } from "@/services/media-assets";
 import { toast } from "sonner";
+import { indexedDBManager } from "@/lib/storage/indexed-db-manager";
+import { useResolvedMediaUrl } from "@/lib/video/media-url-resolver";
 
 export function MediaPanel() {
-  const { project, addMediaAsset } = useVideoProject();
+  const { mediaAssets, addMediaAsset } = useVideoProject();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
 
   // Filter media assets based on search query
-  const filteredAssets = project.mediaAssets.filter(asset => {
+  const filteredAssets = mediaAssets.filter((asset: any) => {
     const mediaInfo = getMediaInfo(asset);
     return mediaInfo.name.toLowerCase().includes(searchQuery.toLowerCase());
   });
@@ -62,7 +64,7 @@ export function MediaPanel() {
           }
         });
 
-        if (result.success) {
+        if (result.success && result.asset) {
           // Add the asset to the project store
           addMediaAsset(result.asset);
           successCount++;
@@ -98,6 +100,7 @@ export function MediaPanel() {
 
   const MediaItem = ({ asset }: { asset: any }) => {
     const mediaInfo = getMediaInfo(asset);
+    const { url: resolvedUrl, isLoading: isLoadingUrl } = useResolvedMediaUrl(mediaInfo.url);
     
     const getIcon = () => {
       switch (mediaInfo.type) {
@@ -127,11 +130,15 @@ export function MediaPanel() {
           {/* Thumbnail */}
           <div className="aspect-video bg-zinc-800 rounded-md mb-2 flex items-center justify-center overflow-hidden">
             {mediaInfo.type === "image" ? (
+              isLoadingUrl ? (
+                <div className="w-4 h-4 border-2 border-zinc-600 border-t-transparent rounded-full animate-spin" />
+              ) : (
               <img 
-                src={mediaInfo.url} 
+                  src={resolvedUrl} 
                 alt={mediaInfo.name}
                 className="w-full h-full object-cover"
               />
+              )
             ) : (
               <div className={cn("flex flex-col items-center gap-1", getTypeColor())}>
                 {getIcon()}
@@ -292,7 +299,7 @@ export function MediaPanel() {
                 "gap-3",
                 viewMode === "grid" ? "grid grid-cols-2" : "space-y-1"
               )}>
-                {filteredAssets.map((asset) => (
+                {filteredAssets.map((asset: any) => (
                   <MediaItem key={asset.id} asset={asset} />
                 ))}
               </div>
@@ -302,7 +309,7 @@ export function MediaPanel() {
           {/* Stats */}
           <div className="p-4 border-t border-zinc-800 text-xs text-zinc-500">
             {filteredAssets.length} asset{filteredAssets.length !== 1 ? 's' : ''}
-            {searchQuery && ` (filtered from ${project.mediaAssets.length})`}
+            {searchQuery && ` (filtered from ${mediaAssets.length})`}
           </div>
 
           {/* Hidden file input */}

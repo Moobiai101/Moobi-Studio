@@ -9,23 +9,33 @@ import {
   useVideoConfig,
   Sequence 
 } from "remotion";
-import { VideoProject, TimelineClip, MediaAsset, getMediaInfo } from "../store/video-project-store";
+import { getMediaInfo, EnhancedTimelineTrack, EnhancedTimelineClip } from "../store/video-project-store";
+import { VideoEditorProject, UserAsset } from "@/types/database";
 
 interface VideoCompositionProps {
-  project: VideoProject;
+  project: {
+    project: VideoEditorProject | null;
+    tracks: EnhancedTimelineTrack[];
+    mediaAssets: UserAsset[];
+  };
   currentTime?: number;
 }
 
 export const VideoComposition: React.FC<VideoCompositionProps> = ({
-  project,
+  project: { project, tracks, mediaAssets },
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
+  // Don't render if no project data
+  if (!project || !tracks || !mediaAssets) {
+    return <AbsoluteFill style={{ backgroundColor: "#000000" }} />;
+  }
+
   // Get tracks by type (sort overlay tracks by creation order for proper layering)
-  const videoTracks = project.tracks.filter(track => track.type === "video");
-  const overlayTracks = project.tracks.filter(track => track.type === "overlay");
-  const audioTracks = project.tracks.filter(track => track.type === "audio");
+  const videoTracks = tracks.filter(track => track.track_type === "video");
+  const overlayTracks = tracks.filter(track => track.track_type === "overlay");
+  const audioTracks = tracks.filter(track => track.track_type === "audio");
 
   // Note: All video elements are muted so Audio Engine can control audio
 
@@ -36,7 +46,8 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
         <VideoTrackSequence 
           key={track.id}
           track={track}
-          project={project}
+          mediaAssets={mediaAssets}
+          fps={project.fps}
           zIndex={10 + (videoTracks.length - trackIndex)}
         />
       ))}
@@ -46,7 +57,8 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
         <OverlayTrackSequence 
           key={track.id}
           track={track}
-          project={project}
+          mediaAssets={mediaAssets}
+          fps={project.fps}
           zIndex={100 + trackIndex} // Higher z-index for overlays
         />
       ))}
@@ -56,7 +68,8 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
         <AudioTrackSequence 
           key={track.id}
           track={track}
-          project={project}
+          mediaAssets={mediaAssets}
+          fps={project.fps}
         />
       ))} */}
     </AbsoluteFill>
@@ -65,26 +78,28 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
 
 // Video track sequence renderer
 interface TrackSequenceProps {
-  track: any;
-  project: VideoProject;
+  track: EnhancedTimelineTrack;
+  mediaAssets: UserAsset[];
+  fps: number;
   zIndex?: number;
 }
 
 const VideoTrackSequence: React.FC<TrackSequenceProps> = ({ 
   track, 
-  project, 
+  mediaAssets, 
+  fps,
   zIndex = 0 
 }) => {
   return (
     <AbsoluteFill style={{ zIndex }}>
-      {track.clips.map((clip: TimelineClip) => {
-        const asset = project.mediaAssets.find((a: MediaAsset) => a.id === clip.mediaId);
+      {track.clips.map((clip: EnhancedTimelineClip) => {
+        const asset = mediaAssets.find((a: UserAsset) => a.id === clip.asset_id);
         if (!asset) return null;
 
         const mediaInfo = getMediaInfo(asset);
-        const startFrame = Math.floor(clip.startTime * project.fps);
-        const clipDuration = clip.endTime - clip.startTime;
-        const durationInFrames = Math.floor(clipDuration * project.fps);
+        const startFrame = Math.floor(clip.start_time * fps);
+        const clipDuration = clip.end_time - clip.start_time;
+        const durationInFrames = Math.floor(clipDuration * fps);
 
         return (
           <Sequence
@@ -94,9 +109,9 @@ const VideoTrackSequence: React.FC<TrackSequenceProps> = ({
             premountFor={30} // Premount 1 second for smooth playback
           >
             {mediaInfo.type === "video" ? (
-              <VideoClipRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} />
+              <VideoClipRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} fps={fps} />
             ) : mediaInfo.type === "image" ? (
-              <ImageClipRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} />
+              <ImageClipRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} fps={fps} />
             ) : null}
           </Sequence>
         );
@@ -108,19 +123,24 @@ const VideoTrackSequence: React.FC<TrackSequenceProps> = ({
 // Overlay track sequence renderer (for professional overlay compositing)
 const OverlayTrackSequence: React.FC<TrackSequenceProps> = ({ 
   track, 
-  project, 
+  mediaAssets, 
+  fps,
   zIndex = 100 
 }) => {
   return (
-    <AbsoluteFill style={{ zIndex, mixBlendMode: track.blendMode || 'normal', opacity: track.opacity || 1 }}>
-      {track.clips.map((clip: TimelineClip) => {
-        const asset = project.mediaAssets.find((a: MediaAsset) => a.id === clip.mediaId);
+    <AbsoluteFill style={{ 
+      zIndex, 
+      mixBlendMode: (track.blend_mode as any) || 'normal', 
+      opacity: track.opacity || 1 
+    }}>
+      {track.clips.map((clip: EnhancedTimelineClip) => {
+        const asset = mediaAssets.find((a: UserAsset) => a.id === clip.asset_id);
         if (!asset) return null;
 
         const mediaInfo = getMediaInfo(asset);
-        const startFrame = Math.floor(clip.startTime * project.fps);
-        const clipDuration = clip.endTime - clip.startTime;
-        const durationInFrames = Math.floor(clipDuration * project.fps);
+        const startFrame = Math.floor(clip.start_time * fps);
+        const clipDuration = clip.end_time - clip.start_time;
+        const durationInFrames = Math.floor(clipDuration * fps);
 
         return (
           <Sequence
@@ -130,9 +150,9 @@ const OverlayTrackSequence: React.FC<TrackSequenceProps> = ({
             premountFor={30}
           >
             {mediaInfo.type === "video" ? (
-              <OverlayVideoRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} track={track} />
+              <OverlayVideoRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} track={track} fps={fps} />
             ) : mediaInfo.type === "image" ? (
-              <OverlayImageRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} track={track} />
+              <OverlayImageRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} track={track} fps={fps} />
             ) : null}
           </Sequence>
         );
@@ -145,17 +165,19 @@ const OverlayTrackSequence: React.FC<TrackSequenceProps> = ({
 /* 
 const AudioTrackSequence: React.FC<TrackSequenceProps> = ({ 
   track, 
-  project 
+  mediaAssets,
+  fps
 }) => {
   return (
     <>
-      {track.clips.map((clip: TimelineClip) => {
-        const asset = project.mediaAssets.find((a: MediaAsset) => a.id === clip.mediaId);
-        if (!asset || asset.type !== "audio") return null;
+      {track.clips.map((clip: EnhancedTimelineClip) => {
+        const asset = mediaAssets.find((a: UserAsset) => a.id === clip.asset_id);
+        if (!asset || !asset.content_type.startsWith('audio/')) return null;
 
-        const startFrame = Math.floor(clip.startTime * project.fps);
-        const clipDuration = clip.endTime - clip.startTime;
-        const durationInFrames = Math.floor(clipDuration * project.fps);
+        const mediaInfo = getMediaInfo(asset);
+        const startFrame = Math.floor(clip.start_time * fps);
+        const clipDuration = clip.end_time - clip.start_time;
+        const durationInFrames = Math.floor(clipDuration * fps);
 
         return (
           <Sequence
@@ -165,10 +187,10 @@ const AudioTrackSequence: React.FC<TrackSequenceProps> = ({
             premountFor={30}
           >
             <Audio
-              src={asset.url}
-              volume={clip.volume}
-              startFrom={Math.floor(clip.trimStart * project.fps)}
-              endAt={Math.floor(clip.trimEnd * project.fps)}
+              src={mediaInfo.url}
+              volume={clip.volume || 1}
+              startFrom={Math.floor((clip.trim_start || 0) * fps)}
+              endAt={Math.floor((clip.trim_end || clipDuration) * fps)}
             />
           </Sequence>
         );
@@ -180,15 +202,16 @@ const AudioTrackSequence: React.FC<TrackSequenceProps> = ({
 
 // Individual clip renderers
 const VideoClipRenderer: React.FC<{
-  asset: MediaAsset;
+  asset: UserAsset;
   mediaInfo: ReturnType<typeof getMediaInfo>;
-  clip: TimelineClip;
-}> = ({ asset, mediaInfo, clip }) => {
+  clip: EnhancedTimelineClip;
+  fps: number;
+}> = ({ asset, mediaInfo, clip, fps }) => {
   return (
     <Video
       src={mediaInfo.url}
-      startFrom={Math.floor(clip.trimStart * 30)} // TODO: Use proper FPS from project
-      endAt={Math.floor(clip.trimEnd * 30)}
+      startFrom={Math.floor((clip.trim_start || 0) * fps)}
+      endAt={Math.floor((clip.trim_end || (clip.end_time - clip.start_time)) * fps)}
       volume={0} // Muted - Audio Engine handles all audio
       style={{
         width: "100%",
@@ -204,10 +227,11 @@ const VideoClipRenderer: React.FC<{
 };
 
 const ImageClipRenderer: React.FC<{
-  asset: MediaAsset;
+  asset: UserAsset;
   mediaInfo: ReturnType<typeof getMediaInfo>;
-  clip: TimelineClip;
-}> = ({ asset, mediaInfo, clip }) => {
+  clip: EnhancedTimelineClip;
+  fps: number;
+}> = ({ asset, mediaInfo, clip, fps }) => {
   return (
     <Img
       src={mediaInfo.url}
@@ -226,11 +250,12 @@ const ImageClipRenderer: React.FC<{
 
 // Overlay renderers (with professional compositing support and transform data)
 const OverlayVideoRenderer: React.FC<{
-  asset: MediaAsset;
+  asset: UserAsset;
   mediaInfo: ReturnType<typeof getMediaInfo>;
-  clip: TimelineClip;
-  track: any;
-}> = ({ asset, mediaInfo, clip, track }) => {
+  clip: EnhancedTimelineClip;
+  track: EnhancedTimelineTrack;
+  fps: number;
+}> = ({ asset, mediaInfo, clip, track, fps }) => {
   // Get transform data from clip with proper defaults
   const defaultTransform = {
     position: { x: 0, y: 0 },
@@ -239,13 +264,25 @@ const OverlayVideoRenderer: React.FC<{
     opacity: 1
   };
   
-  const clipTransform = (clip as any).overlayTransform || {};
-  const transform = {
-    position: clipTransform.position || defaultTransform.position,
-    scale: clipTransform.scale || defaultTransform.scale,
-    rotation: clipTransform.rotation ?? defaultTransform.rotation,
-    opacity: clipTransform.opacity ?? defaultTransform.opacity
-  };
+  // Extract transform data safely from clip.transform_data or overlayTransform
+  let transform = defaultTransform;
+  if (clip.transform_data && typeof clip.transform_data === 'object') {
+    const transformData = clip.transform_data as any;
+    transform = {
+      position: transformData.position || defaultTransform.position,
+      scale: transformData.scale || defaultTransform.scale,
+      rotation: transformData.rotation ?? defaultTransform.rotation,
+      opacity: transformData.opacity ?? defaultTransform.opacity
+    };
+  } else if ((clip as any).overlayTransform) {
+    const clipTransform = (clip as any).overlayTransform;
+    transform = {
+      position: clipTransform.position || defaultTransform.position,
+      scale: clipTransform.scale || defaultTransform.scale,
+      rotation: clipTransform.rotation ?? defaultTransform.rotation,
+      opacity: clipTransform.opacity ?? defaultTransform.opacity
+    };
+  }
 
   const aspectRatio = mediaInfo.metadata?.width && mediaInfo.metadata?.height 
     ? mediaInfo.metadata.width / mediaInfo.metadata.height 
@@ -266,7 +303,7 @@ const OverlayVideoRenderer: React.FC<{
     width: '50%', // Default overlay size
     aspectRatio: `${aspectRatio}`,
     opacity: (track.opacity || 1) * transform.opacity,
-    mixBlendMode: track.blendMode || 'normal',
+    mixBlendMode: (track.blend_mode as any) || 'normal',
     transform: `translate(${transform.position.x}px, ${transform.position.y}px) scale(${transform.scale.x}, ${transform.scale.y}) rotate(${transform.rotation}deg)`,
     transformOrigin: 'center center',
     pointerEvents: 'auto'
@@ -282,8 +319,8 @@ const OverlayVideoRenderer: React.FC<{
       >
         <Video
           src={mediaInfo.url}
-          startFrom={Math.floor(clip.trimStart * 30)}
-          endAt={Math.floor(clip.trimEnd * 30)}
+          startFrom={Math.floor((clip.trim_start || 0) * fps)}
+          endAt={Math.floor((clip.trim_end || (clip.end_time - clip.start_time)) * fps)}
           volume={0} // Muted - Audio Engine handles all audio
           style={{
             width: "100%",
@@ -300,11 +337,12 @@ const OverlayVideoRenderer: React.FC<{
 };
 
 const OverlayImageRenderer: React.FC<{
-  asset: MediaAsset;
+  asset: UserAsset;
   mediaInfo: ReturnType<typeof getMediaInfo>;
-  clip: TimelineClip;
-  track: any;
-}> = ({ asset, mediaInfo, clip, track }) => {
+  clip: EnhancedTimelineClip;
+  track: EnhancedTimelineTrack;
+  fps: number;
+}> = ({ asset, mediaInfo, clip, track, fps }) => {
   // Get transform data from clip with proper defaults
   const defaultTransform = {
     position: { x: 0, y: 0 },
@@ -313,13 +351,25 @@ const OverlayImageRenderer: React.FC<{
     opacity: 1
   };
   
-  const clipTransform = (clip as any).overlayTransform || {};
-  const transform = {
-    position: clipTransform.position || defaultTransform.position,
-    scale: clipTransform.scale || defaultTransform.scale,
-    rotation: clipTransform.rotation ?? defaultTransform.rotation,
-    opacity: clipTransform.opacity ?? defaultTransform.opacity
-  };
+  // Extract transform data safely from clip.transform_data or overlayTransform
+  let transform = defaultTransform;
+  if (clip.transform_data && typeof clip.transform_data === 'object') {
+    const transformData = clip.transform_data as any;
+    transform = {
+      position: transformData.position || defaultTransform.position,
+      scale: transformData.scale || defaultTransform.scale,
+      rotation: transformData.rotation ?? defaultTransform.rotation,
+      opacity: transformData.opacity ?? defaultTransform.opacity
+    };
+  } else if ((clip as any).overlayTransform) {
+    const clipTransform = (clip as any).overlayTransform;
+    transform = {
+      position: clipTransform.position || defaultTransform.position,
+      scale: clipTransform.scale || defaultTransform.scale,
+      rotation: clipTransform.rotation ?? defaultTransform.rotation,
+      opacity: clipTransform.opacity ?? defaultTransform.opacity
+    };
+  }
 
   const aspectRatio = mediaInfo.metadata?.width && mediaInfo.metadata?.height
     ? mediaInfo.metadata.width / mediaInfo.metadata.height
@@ -340,7 +390,7 @@ const OverlayImageRenderer: React.FC<{
     width: '50%', // Default overlay size
     aspectRatio: `${aspectRatio}`,
     opacity: (track.opacity || 1) * transform.opacity,
-    mixBlendMode: track.blendMode || 'normal',
+    mixBlendMode: (track.blend_mode as any) || 'normal',
     transform: `translate(${transform.position.x}px, ${transform.position.y}px) scale(${transform.scale.x}, ${transform.scale.y}) rotate(${transform.rotation}deg)`,
     transformOrigin: 'center center',
     pointerEvents: 'auto'

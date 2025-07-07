@@ -168,7 +168,7 @@ export function VideoProjectList({ onOpenProject }: VideoProjectListProps) {
                 </CardTitle>
                 <div className="text-sm text-zinc-400">
                   <div>Duration: {formatDuration(project.duration_seconds)}</div>
-                  <div>Resolution: {project.resolution.width}×{project.resolution.height}</div>
+                  <div>Resolution: {typeof project.resolution === 'object' && project.resolution ? `${(project.resolution as any).width || 1920}×${(project.resolution as any).height || 1080}` : '1920×1080'}</div>
                   <div>Updated: {formatDate(project.updated_at)}</div>
                 </div>
               </CardHeader>

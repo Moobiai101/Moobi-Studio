@@ -92,12 +92,9 @@ export function VideoProjectProvider({
         await storeRef.current.getState().loadProject(project.id);
         
         // Clear existing media assets and reload from database
-        storeRef.current.setState(state => ({
-          project: {
-            ...state.project,
-            mediaAssets: []
-          }
-        }));
+        storeRef.current.setState({ 
+          mediaAssets: []
+        });
         
         // Load media assets for the video studio
         const mediaAssets = await MediaAssetService.getUserAssets();

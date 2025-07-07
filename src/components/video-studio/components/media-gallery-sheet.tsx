@@ -23,6 +23,8 @@ import {
 import { useVideoProject } from "../hooks/use-video-project";
 import { formatTime, formatFileSize } from "../lib/utils";
 import { getMediaInfo } from "../store/video-project-store";
+import { useResolvedMediaUrl } from "@/lib/video/media-url-resolver";
+import { toast } from "sonner";
 
 interface MediaGallerySheetProps {
   open: boolean;
@@ -32,7 +34,8 @@ interface MediaGallerySheetProps {
 
 export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: MediaGallerySheetProps) {
   const { 
-    project, 
+    tracks, 
+    mediaAssets, 
     addClip, 
     removeMediaAsset, 
     updateClip 
@@ -44,7 +47,7 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
   const [editingName, setEditingName] = useState(false);
   const [newName, setNewName] = useState("");
 
-  const selectedAsset = project.mediaAssets.find((asset: any) => asset.id === selectedMediaId);
+  const selectedAsset = mediaAssets.find((asset: any) => asset.id === selectedMediaId);
 
   if (!selectedAsset) {
     return null;
@@ -53,51 +56,66 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
   // Get media info using our helper function
   const mediaInfo = getMediaInfo(selectedAsset);
 
+  // Resolve media URL for IndexedDB assets
+  const { url: resolvedUrl, isLoading: isLoadingUrl } = useResolvedMediaUrl(mediaInfo.url);
+
   // Find clips using this asset
-  const relatedClips = project.tracks
+  const relatedClips = tracks
     .flatMap((track: any) => track.clips)
-    .filter((clip: any) => clip.mediaId === selectedMediaId);
+    .filter((clip: any) => clip.asset_id === selectedMediaId);
 
-  const handleAddToTimeline = () => {
-    // Find appropriate track
-    const targetTrack = project.tracks.find((track: any) => 
-      (mediaInfo.type === "video" || mediaInfo.type === "image") 
-        ? track.type === "video" 
-        : track.type === "audio"
-    );
-
-    if (targetTrack) {
-      // Find the end time of the last clip in the track
-      const lastClip = targetTrack.clips.reduce((latest: number, clip: any) => 
-        clip.endTime > latest ? clip.endTime : latest, 0
+  const handleAddToTimeline = async () => {
+    try {
+      // Find appropriate track
+      const targetTrack = tracks.find((track: any) => 
+        (mediaInfo.type === "video" || mediaInfo.type === "image") 
+          ? track.track_type === "video" 
+          : track.track_type === "audio"
       );
 
-      addClip({
-        mediaId: selectedAsset.id,
-        trackId: targetTrack.id,
-        startTime: lastClip,
-        endTime: lastClip + (mediaInfo.duration || 5),
-        trimStart: 0,
-        trimEnd: mediaInfo.duration || 5,
-        volume: 1,
-        muted: false,
-        effects: [],
-      });
+      if (targetTrack) {
+        // Find the end time of the last clip in the track
+        const lastClip = targetTrack.clips.reduce((latest: number, clip: any) => 
+          clip.end_time > latest ? clip.end_time : latest, 0
+        );
+
+        // Use the addClip method from store which handles the new schema
+        await addClip(
+          targetTrack.id,
+          selectedAsset.id,
+          lastClip,
+          mediaInfo.duration || 5
+        );
+
+        toast.success('Added to timeline!');
+      } else {
+        toast.error('No suitable track found for this media type');
+      }
+    } catch (error) {
+      console.error('Error adding to timeline:', error);
+      toast.error('Failed to add to timeline');
     }
   };
 
-  const handleDeleteAsset = () => {
+  const handleDeleteAsset = async () => {
     if (confirm("Are you sure you want to delete this media asset? This will also remove all clips using this asset.")) {
-      removeMediaAsset(selectedAsset.id);
-      onOpenChange(false);
+      try {
+        await removeMediaAsset(selectedAsset.id);
+        onOpenChange(false);
+        toast.success('Asset deleted successfully');
+      } catch (error) {
+        console.error('Error deleting asset:', error);
+        toast.error('Failed to delete asset');
+      }
     }
   };
 
   const handleRename = () => {
     if (editingName) {
-      // TODO: Implement asset renaming
+      // TODO: Implement asset renaming in the database
       console.log("Renaming asset to:", newName);
       setEditingName(false);
+      toast.info('Asset renaming not yet implemented');
     } else {
       setNewName(mediaInfo.name);
       setEditingName(true);
@@ -105,18 +123,25 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
   };
 
   const handleDownload = () => {
-    // Create download link
-    const link = document.createElement('a');
-    link.href = mediaInfo.url;
-    link.download = mediaInfo.name;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    try {
+      // Create download link
+      const link = document.createElement('a');
+      link.href = resolvedUrl || mediaInfo.url;
+      link.download = mediaInfo.name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      toast.success('Download started');
+    } catch (error) {
+      console.error('Error downloading asset:', error);
+      toast.error('Failed to download asset');
+    }
   };
 
   const handleDuplicate = () => {
     // TODO: Implement asset duplication
     console.log("Duplicating asset:", selectedAsset.id);
+    toast.info('Asset duplication not yet implemented');
   };
 
   return (
@@ -133,9 +158,13 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
           {/* Media Preview */}
           <div className="space-y-4">
             <div className="aspect-video bg-black rounded-lg overflow-hidden relative">
-              {mediaInfo.type === "video" ? (
+              {isLoadingUrl ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : mediaInfo.type === "video" ? (
                 <video
-                  src={mediaInfo.url}
+                  src={resolvedUrl || mediaInfo.url}
                   className="w-full h-full object-contain"
                   controls={false}
                   muted={isMuted}
@@ -147,7 +176,7 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                 />
               ) : mediaInfo.type === "image" ? (
                 <img
-                  src={mediaInfo.url}
+                  src={resolvedUrl || mediaInfo.url}
                   alt={mediaInfo.name}
                   className="w-full h-full object-contain"
                 />
@@ -267,10 +296,10 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                     </div>
                   )}
 
-                  {mediaInfo.metadata?.size && (
+                  {selectedAsset.file_size_bytes && (
                     <div>
                       <Label className="text-sm font-medium">File Size</Label>
-                      <p className="text-sm text-muted-foreground">{formatFileSize(mediaInfo.metadata.size)}</p>
+                      <p className="text-sm text-muted-foreground">{formatFileSize(selectedAsset.file_size_bytes)}</p>
                     </div>
                   )}
 
@@ -289,6 +318,13 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                       <p className="text-sm text-muted-foreground">{mediaInfo.metadata.fps} fps</p>
                     </div>
                   )}
+
+                  <div>
+                    <Label className="text-sm font-medium">Storage</Label>
+                    <p className="text-sm text-muted-foreground">
+                      {selectedAsset.local_asset_id ? 'Local (IndexedDB)' : 'Cloud Storage'}
+                    </p>
+                  </div>
 
                   <div>
                     <Label className="text-sm font-medium">Added</Label>
@@ -313,22 +349,22 @@ export function MediaGallerySheet({ open, onOpenChange, selectedMediaId }: Media
                   <ScrollArea className="h-48">
                     <div className="space-y-2">
                       {relatedClips.map((clip: any, index: number) => {
-                        const track = project.tracks.find((t: any) => t.id === clip.trackId);
+                        const track = tracks.find((t: any) => t.id === clip.track_id);
                         return (
                           <div key={clip.id} className="bg-muted rounded-lg p-3">
                             <div className="flex items-center justify-between">
                               <div>
                                 <p className="text-sm font-medium">Clip {index + 1}</p>
                                 <p className="text-xs text-muted-foreground">
-                                  Track: {track?.name || "Unknown"}
+                                  Track: {track?.track_name || "Unknown"}
                                 </p>
                               </div>
                               <div className="text-right">
                                 <p className="text-xs text-muted-foreground">
-                                  {formatTime(clip.startTime)} - {formatTime(clip.endTime)}
+                                  {formatTime(clip.start_time)} - {formatTime(clip.end_time)}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
-                                  Duration: {formatTime(clip.endTime - clip.startTime)}
+                                  Duration: {formatTime(clip.end_time - clip.start_time)}
                                 </p>
                               </div>
                             </div>

@@ -1,6 +1,13 @@
 import { createClient } from "@/lib/supabase/client";
 import { UserAsset } from "@/types/database";
-import { detectFileType, getVideoMetadata, getMediaDuration, getImageDimensions } from "@/components/video-studio/lib/media-utils";
+import { indexedDBManager } from '@/lib/storage/indexed-db-manager';
+import { deviceFingerprint } from '@/lib/device/device-fingerprint';
+import { 
+  getMediaDuration, 
+  getVideoMetadata, 
+  getImageDimensions,
+  createVideoThumbnail 
+} from '@/components/video-studio/lib/media-utils';
 
 const supabase = createClient();
 
@@ -13,261 +20,312 @@ interface MediaUploadOptions {
 }
 
 interface UploadResult {
-  asset: UserAsset;
+  asset?: UserAsset;
   success: boolean;
   error?: string;
 }
 
 export class MediaAssetService {
+  private static supabase = createClient();
+
   /**
-   * Production-grade media upload pipeline using existing worker infrastructure:
-   * 1. Extract metadata from file locally
-   * 2. Use existing /api/commit-asset endpoint for upload + database save
-   * 3. Return complete UserAsset object
+   * Upload media asset using local-first approach
+   * Files are stored in IndexedDB, metadata synced to cloud
    */
   static async uploadMediaAsset(
     file: File, 
     options: MediaUploadOptions = {}
   ): Promise<UploadResult> {
-    const { onProgress, onStatusChange } = options;
-    
     try {
-      // Get authenticated user session token
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session?.access_token) {
-        throw new Error("User not authenticated");
+      // Get authenticated user
+      const { data: { user }, error: userError } = await this.supabase.auth.getUser();
+      if (userError || !user) {
+        return { success: false, error: 'User not authenticated' };
       }
 
-      onStatusChange?.("Extracting metadata...");
-      onProgress?.(20);
+      // Register device if not already done
+      const deviceId = await deviceFingerprint.registerDevice();
+      const fingerprint = await deviceFingerprint.getFingerprint();
 
-      // Extract file metadata based on type
-      const metadata = await this.extractFileMetadata(file);
-      
-      onStatusChange?.("Uploading to cloud storage...");
-      onProgress?.(60);
+      // Update status
+      options.onStatusChange?.('Storing file locally...');
+      options.onProgress?.(10);
 
-      // Use dedicated video studio upload endpoint with FormData
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('title', file.name.replace(/\.[^/.]+$/, ""));
-      formData.append('description', `Uploaded media file for video editing`);
-      formData.append('sourceStudio', 'video-studio');
-      
-      // Add metadata as JSON string
-      if (metadata.duration) formData.append('duration', metadata.duration.toString());
-      if (metadata.dimensions) formData.append('dimensions', JSON.stringify(metadata.dimensions));
-      if (metadata.videoMetadata) formData.append('videoMetadata', JSON.stringify(metadata.videoMetadata));
+      // Store file in IndexedDB
+      const localAssetId = await indexedDBManager.storeMediaAsset(file);
+      options.onProgress?.(30);
 
-      const response = await fetch(`${WORKER_API_URL}/api/upload-media`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${session.access_token}`
-          // Don't set Content-Type - let browser set it with boundary for FormData
-        },
-        body: formData
-      });
+      // Extract metadata based on file type
+      options.onStatusChange?.('Extracting metadata...');
+      let duration: number | undefined;
+      let dimensions: { width: number; height: number } | undefined;
+      let videoMetadata: any = undefined;
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Upload failed: ${response.status}`);
+      const fileType = file.type.startsWith('video/') ? 'video' : 
+                       file.type.startsWith('audio/') ? 'audio' : 
+                       file.type.startsWith('image/') ? 'image' : 'unknown';
+
+      if (fileType === 'video') {
+        const blobUrl = await indexedDBManager.getMediaAssetUrl(localAssetId);
+        const metadata = await getVideoMetadata(blobUrl);
+        duration = metadata.duration;
+        dimensions = { width: metadata.width, height: metadata.height };
+        videoMetadata = { fps: metadata.fps || 30 };
+        
+        // Generate thumbnail
+        options.onStatusChange?.('Generating thumbnail...');
+        try {
+          const thumbnailDataUrl = await createVideoThumbnail(blobUrl, 2);
+          const thumbnailBlob = await this.dataUrlToBlob(thumbnailDataUrl);
+          await indexedDBManager.storeThumbnail(localAssetId.replace('local_', ''), thumbnailBlob);
+        } catch (error) {
+          console.warn('Failed to generate thumbnail:', error);
+        }
+        
+        URL.revokeObjectURL(blobUrl);
+      } else if (fileType === 'audio') {
+        const blobUrl = await indexedDBManager.getMediaAssetUrl(localAssetId);
+        duration = await getMediaDuration(blobUrl, 'audio');
+        URL.revokeObjectURL(blobUrl);
+      } else if (fileType === 'image') {
+        const blobUrl = await indexedDBManager.getMediaAssetUrl(localAssetId);
+        dimensions = await getImageDimensions(blobUrl);
+        duration = 5; // Default duration for images
+        URL.revokeObjectURL(blobUrl);
       }
 
-      const result = await response.json();
-      
-      if (!result.success || !result.asset) {
-        throw new Error("Upload completed but asset data missing");
-      }
+      options.onProgress?.(60);
 
-      onStatusChange?.("Complete!");
-      onProgress?.(100);
-
-      // Convert the worker response to UserAsset format
-      const userAsset: UserAsset = {
-        id: result.asset.id,
-        user_id: session.user?.id || '',
-        title: result.asset.title || file.name.replace(/\.[^/.]+$/, ""),
-        description: result.asset.description || `Uploaded media file for video editing`,
-        tags: result.asset.tags || [],
-        r2_object_key: result.asset.r2_object_key || '',
+      // Create asset record in database (metadata only)
+      options.onStatusChange?.('Syncing metadata...');
+      const { data: asset, error: assetError } = await this.supabase
+        .from('user_assets')
+        .insert({
+          user_id: user.id,
+          title: file.name,
         file_name: file.name,
         content_type: file.type,
         file_size_bytes: file.size,
         source_studio: 'video-studio',
-        duration_seconds: metadata.duration,
-        dimensions: metadata.dimensions,
-        video_metadata: metadata.videoMetadata,
-        created_at: result.asset.createdAt || new Date().toISOString(),
-        updated_at: result.asset.createdAt || new Date().toISOString()
-      };
+          local_asset_id: localAssetId,
+          device_fingerprint: fingerprint,
+          r2_object_key: localAssetId, // Use local ID as key
+          duration_seconds: duration,
+          dimensions,
+          video_metadata: videoMetadata,
+          thumbnails_generated: fileType === 'video',
+          tags: []
+        })
+        .select()
+        .single();
 
-      return {
-        asset: userAsset,
-        success: true
-      };
-
-    } catch (error) {
-      console.error("Media upload failed:", error);
-      return {
-        asset: {} as UserAsset,
-        success: false,
-        error: error instanceof Error ? error.message : "Unknown error"
-      };
-    }
-  }
-
-  /**
-   * Extract comprehensive metadata from uploaded file
-   */
-  private static async extractFileMetadata(file: File) {
-    const fileType = detectFileType(file);
-    const tempUrl = URL.createObjectURL(file);
-    
-    try {
-      switch (fileType) {
-        case 'video': {
-          const videoMeta = await getVideoMetadata(tempUrl);
-          return {
-            duration: videoMeta.duration,
-            dimensions: {
-              width: videoMeta.width,
-              height: videoMeta.height,
-            },
-            videoMetadata: {
-              fps: videoMeta.fps,
-              codec: 'unknown',
-              bitrate: 'unknown'
-            }
-          };
-        }
-        
-        case 'audio': {
-          const duration = await getMediaDuration(tempUrl, 'audio');
-          return { 
-            duration,
-            dimensions: undefined,
-            videoMetadata: undefined
-          };
-        }
-        
-        case 'image': {
-          const dimensions = await getImageDimensions(tempUrl);
-          return {
-            duration: 5, // Default duration for images in timeline
-            dimensions,
-            videoMetadata: undefined
-          };
-        }
-        
-        default:
-          return {
-            duration: undefined,
-            dimensions: undefined,
-            videoMetadata: undefined
-          };
+      if (assetError) {
+        throw assetError;
       }
+
+      options.onProgress?.(90);
+
+      // Create device mapping record
+      await this.supabase
+        .from('asset_device_mapping')
+        .insert({
+          asset_id: asset.id,
+          device_fingerprint: fingerprint,
+          is_available: true,
+          local_path: localAssetId,
+          file_hash: null // TODO: Implement file hashing
+        });
+
+      options.onProgress?.(100);
+      options.onStatusChange?.('Upload complete!');
+
+      return { success: true, asset };
+
     } catch (error) {
-      console.warn(`Metadata extraction failed for ${file.name}:`, error);
-      // Return sensible defaults
+      console.error('Error uploading media asset:', error);
       return {
-        duration: fileType === 'image' ? 5 : undefined,
-        dimensions: undefined,
-        videoMetadata: undefined
+        success: false,
+        error: error instanceof Error ? error.message : 'Upload failed' 
       };
-    } finally {
-      URL.revokeObjectURL(tempUrl);
     }
   }
 
   /**
-   * Get user's media assets for the video studio using existing worker endpoint
+   * Get all user assets with local availability info
    */
   static async getUserAssets(): Promise<UserAsset[]> {
     try {
-      // Get authenticated user session token
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session?.access_token) {
-        console.error("User not authenticated for asset fetch");
+      const { data: { user }, error: userError } = await this.supabase.auth.getUser();
+      if (userError || !user) {
+        console.error('User not authenticated');
         return [];
       }
 
-      // Use existing /api/assets endpoint with video studio filter
-      const response = await fetch(`${WORKER_API_URL}/api/assets?source_studio=video-studio`, {
-        headers: { 
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        }
-      });
+      const fingerprint = await deviceFingerprint.getFingerprint();
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch assets: ${response.status}`);
+      // Get all user assets
+      const { data: assets, error } = await this.supabase
+        .from('user_assets')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Error fetching user assets:', error);
+        return [];
       }
 
-      const assets = await response.json();
-      
-      // Convert to UserAsset format (already filtered by source_studio on server)
-      return assets
-        .map((asset: any): UserAsset => ({
-          id: asset.id,
-          user_id: asset.user_id,
-          title: asset.title || asset.file_name,
-          description: asset.description || '',
-          tags: asset.tags || [],
-          r2_object_key: asset.r2_object_key,
-          file_name: asset.file_name,
-          content_type: asset.content_type,
-          file_size_bytes: asset.file_size_bytes,
-          source_studio: asset.source_studio,
-          duration_seconds: asset.duration_seconds,
-          dimensions: asset.dimensions,
-          video_metadata: asset.video_metadata,
-          created_at: asset.created_at,
-          updated_at: asset.updated_at
-        }));
+      // Check local availability for each asset
+      const assetsWithAvailability = await Promise.all(
+        assets.map(async (asset) => {
+          // Check if asset is available on this device
+          const { data: mapping } = await this.supabase
+            .from('asset_device_mapping')
+            .select('is_available, local_path')
+            .eq('asset_id', asset.id)
+            .eq('device_fingerprint', fingerprint)
+            .single();
 
+          return {
+            ...asset,
+            _localAvailable: mapping?.is_available || false,
+            _localPath: mapping?.local_path
+          };
+        })
+      );
+
+      return assetsWithAvailability;
     } catch (error) {
-      console.error("Failed to fetch user assets:", error);
+      console.error('Error in getUserAssets:', error);
       return [];
     }
   }
 
   /**
-   * Delete media asset using existing worker endpoint
+   * Get asset URL - prioritize local storage
    */
-  static async deleteAsset(assetId: string): Promise<boolean> {
+  static getAssetUrl(r2ObjectKey: string): string {
+    // If it's a local asset ID, return it directly
+    if (r2ObjectKey.startsWith('local_')) {
+      // The actual URL will be generated on-demand from IndexedDB
+      // For now, return a special URL that components will recognize
+      return `indexeddb://${r2ObjectKey}`;
+    }
+    
+    // Legacy cloud assets (if any)
+    return `/storage/proxy/${r2ObjectKey}`;
+  }
+
+  /**
+   * Delete media asset (local and cloud)
+   */
+  static async deleteMediaAsset(assetId: string): Promise<boolean> {
     try {
-      // Get authenticated user session token
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      if (sessionError || !session?.access_token) {
-        throw new Error("User not authenticated");
+      const { data: { user }, error: userError } = await this.supabase.auth.getUser();
+      if (userError || !user) {
+        console.error('User not authenticated');
+        return false;
       }
 
-      // Use existing /api/assets/:id DELETE endpoint
-      const response = await fetch(`${WORKER_API_URL}/api/assets/${assetId}`, {
-        method: 'DELETE',
-        headers: { 
-          'Authorization': `Bearer ${session.access_token}`,
-          'Content-Type': 'application/json'
-        }
-      });
+      // Get asset details
+      const { data: asset } = await this.supabase
+        .from('user_assets')
+        .select('local_asset_id')
+        .eq('id', assetId)
+        .single();
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `Delete failed: ${response.status}`);
+      if (asset?.local_asset_id) {
+        // Delete from IndexedDB
+        await indexedDBManager.deleteAsset(asset.local_asset_id);
+      }
+
+      // Delete from database (cascade will handle related records)
+      const { error } = await this.supabase
+        .from('user_assets')
+        .delete()
+        .eq('id', assetId)
+        .eq('user_id', user.id);
+
+      if (error) {
+        console.error('Error deleting media asset:', error);
+        return false;
       }
 
       return true;
     } catch (error) {
-      console.error("Asset deletion failed:", error);
+      console.error('Error in deleteMediaAsset:', error);
       return false;
     }
   }
 
   /**
-   * Generate display URL for asset access using worker media proxy
+   * Get asset from IndexedDB
    */
-  static getAssetUrl(r2Key: string): string {
-    // Use existing worker media proxy endpoint
-    return `${WORKER_API_URL}/api/media?key=${encodeURIComponent(r2Key)}`;
+  static async getLocalAssetUrl(localAssetId: string): Promise<string> {
+    try {
+      return await indexedDBManager.getMediaAssetUrl(localAssetId);
+    } catch (error) {
+      console.error('Error getting local asset:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check storage status
+   */
+  static async getStorageInfo() {
+    return await indexedDBManager.getStorageInfo();
+  }
+
+  /**
+   * Convert data URL to Blob
+   */
+  private static async dataUrlToBlob(dataUrl: string): Promise<Blob> {
+    const response = await fetch(dataUrl);
+    return await response.blob();
+  }
+
+  /**
+   * Request asset recovery (for cross-device sync)
+   */
+  static async requestAssetRecovery(assetId: string): Promise<{
+    needsUpload: boolean;
+    assetInfo?: any;
+  }> {
+    try {
+      // Get asset metadata
+      const { data: asset } = await this.supabase
+        .from('user_assets')
+        .select('*')
+        .eq('id', assetId)
+        .single();
+
+      if (!asset) {
+        return { needsUpload: false };
+      }
+
+      const fingerprint = await deviceFingerprint.getFingerprint();
+
+      // Check if available locally
+      const { data: mapping } = await this.supabase
+        .from('asset_device_mapping')
+        .select('is_available')
+        .eq('asset_id', assetId)
+        .eq('device_fingerprint', fingerprint)
+        .single();
+
+      return {
+        needsUpload: !mapping?.is_available,
+        assetInfo: {
+          filename: asset.file_name,
+          contentType: asset.content_type,
+          size: asset.file_size_bytes,
+          duration: asset.duration_seconds
+        }
+      };
+    } catch (error) {
+      console.error('Error in requestAssetRecovery:', error);
+      return { needsUpload: true };
+    }
   }
 } 

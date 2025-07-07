@@ -16,7 +16,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { getMediaInfo } from '../store/video-project-store';
-import { createClient } from '@/lib/supabase/client';
+import { MediaAssetService } from '@/services/media-assets';
+import { toast } from 'sonner';
 
 interface OverlayControlsProps {
   selectedClip?: any;
@@ -24,41 +25,35 @@ interface OverlayControlsProps {
 }
 
 export function OverlayControls({ selectedClip, currentTime }: OverlayControlsProps) {
-  const { project, addClip, addMediaAsset } = useVideoProject();
+  const { tracks, mediaAssets, addClip, addMediaAsset } = useVideoProject();
   const [isOverlayDialogOpen, setIsOverlayDialogOpen] = useState(false);
   const [selectedOverlayType, setSelectedOverlayType] = useState<'image' | 'video' | null>(null);
-  const [pendingOverlay, setPendingOverlay] = useState<{name: string, url: string, duration: number} | null>(null);
-  
-  const supabase = createClient();
+  const [pendingOverlay, setPendingOverlay] = useState<{name: string, localAssetId: string, duration: number} | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
-  // Get overlay track
-  const overlayTrack = project.tracks.find(track => track.type === 'overlay');
+  // Get overlay track (or create one if it doesn't exist)
+  const overlayTrack = tracks.find(track => track.track_type === 'overlay');
 
   // Handle pending overlay when asset is added to project
   useEffect(() => {
     if (pendingOverlay && overlayTrack) {
-      const addedAsset = project.mediaAssets.find(asset => {
-        const mediaInfo = getMediaInfo(asset);
-        return mediaInfo.name === pendingOverlay.name && mediaInfo.url === pendingOverlay.url;
+      const addedAsset = mediaAssets.find(asset => {
+        return asset.local_asset_id === pendingOverlay.localAssetId;
       });
       
       if (addedAsset) {
-        const mediaInfo = getMediaInfo(addedAsset);
-        addClip({
-          mediaId: addedAsset.id,
-          trackId: overlayTrack.id,
-          startTime: currentTime,
-          endTime: currentTime + pendingOverlay.duration,
-          trimStart: 0,
-          trimEnd: mediaInfo.duration || pendingOverlay.duration,
-          volume: 1,
-          muted: false,
-          effects: []
-        });
+        // Use addClip method from store which handles the new schema
+        addClip(
+          overlayTrack.id, 
+          addedAsset.id, 
+          currentTime, 
+          pendingOverlay.duration
+        );
         setPendingOverlay(null);
+        toast.success('Overlay added to timeline!');
       }
     }
-  }, [project.mediaAssets, pendingOverlay, overlayTrack, currentTime, addClip]);
+  }, [mediaAssets, pendingOverlay, overlayTrack, currentTime, addClip]);
 
   // Listen for the custom event from the timeline toolbar
   useEffect(() => {
@@ -75,104 +70,54 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
 
   // Handle overlay file upload
   const handleOverlayUpload = async (file: File) => {
+    if (isUploading) return;
+    
     try {
-      // Get the authenticated user
-      const { data: { user }, error: userError } = await supabase.auth.getUser();
-      
-      if (userError || !user) {
-        console.error("User not authenticated:", userError);
-        alert("Please sign in to upload overlay files");
-        return;
-      }
+      setIsUploading(true);
+      toast.info(`Uploading ${file.name}...`);
 
-      const url = URL.createObjectURL(file);
-      const type = file.type.startsWith('image/') ? 'image' : 'video' as 'image' | 'video';
-      
-      // Get actual duration for videos
-      let duration: number | undefined = undefined;
-      let metadata: any = {
-        size: file.size,
-        type: file.type,
-      };
+      // Use MediaAssetService for proper local-first upload
+      const result = await MediaAssetService.uploadMediaAsset(file, {
+        onProgress: (progress) => {
+          console.log(`Upload progress: ${Math.round(progress)}%`);
+        },
+        onStatusChange: (status) => {
+          console.log(`Upload status: ${status}`);
+        }
+      });
 
-      if (type === 'video') {
-        // Get actual video duration and metadata
-        const video = document.createElement('video');
-        video.src = url;
-        await new Promise((resolve) => {
-          video.addEventListener('loadedmetadata', () => {
-            duration = video.duration;
-            metadata = {
-              ...metadata,
-              width: video.videoWidth,
-              height: video.videoHeight,
-            };
-            resolve(void 0);
+      if (result.success && result.asset) {
+        // Add the asset to the project store
+        addMediaAsset(result.asset);
+
+        // Set up pending overlay to be added when the asset is available
+        if (overlayTrack && result.asset.local_asset_id) {
+          // Default overlay duration
+          const overlayDuration = result.asset.duration_seconds || 3;
+          
+          setPendingOverlay({
+            name: file.name,
+            localAssetId: result.asset.local_asset_id,
+            duration: overlayDuration
           });
-        });
-      } else if (type === 'image') {
-        // Get image dimensions
-        const img = document.createElement('img');
-        img.src = url;
-        await new Promise((resolve) => {
-          img.addEventListener('load', () => {
-            metadata = {
-              ...metadata,
-              width: img.naturalWidth,
-              height: img.naturalHeight,
-            };
-            resolve(void 0);
-          });
-        });
-        duration = 3; // Default 3 seconds for images
+        }
+
+        setIsOverlayDialogOpen(false);
+        setSelectedOverlayType(null);
+        toast.success(`${file.name} uploaded successfully!`);
+      } else {
+        toast.error(`Failed to upload ${file.name}: ${result.error}`);
       }
-      
-      // Create media asset with correct UserAsset structure
-      const mediaAsset = {
-        user_id: user.id,
-        title: file.name,
-        file_name: file.name,
-        content_type: file.type,
-        file_size_bytes: file.size,
-        r2_object_key: url,
-        duration_seconds: duration,
-        dimensions: metadata.width && metadata.height ? {
-          width: metadata.width,
-          height: metadata.height
-        } : undefined,
-        video_metadata: type === 'video' ? {
-          fps: 30 // Default FPS
-        } : undefined,
-        tags: [],
-        source_studio: "video-studio",
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      };
-
-      // Add to media assets first
-      await addMediaAsset(mediaAsset);
-
-      // Set up pending overlay to be added when the asset is available
-      if (overlayTrack) {
-        // Use actual duration for videos, default for images
-        const overlayDuration = duration || 3;
-        
-        setPendingOverlay({
-          name: file.name,
-          url: url,
-          duration: overlayDuration
-        });
-      }
-
-      setIsOverlayDialogOpen(false);
-      setSelectedOverlayType(null);
     } catch (error) {
       console.error('Error uploading overlay:', error);
-      alert('Failed to upload overlay. Please try again.');
+      toast.error('Failed to upload overlay. Please try again.');
+    } finally {
+      setIsUploading(false);
     }
   };
 
-  // Removed overlay editing handlers - now handled by upper timeline controls
+  // Get overlay count safely
+  const overlayCount = overlayTrack?.clips?.length || 0;
 
   return (
     <div className="flex items-center justify-between p-4 bg-zinc-900 border-t border-zinc-800">
@@ -205,6 +150,7 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
                     selectedOverlayType === 'image' && "border-purple-400 bg-purple-500/10"
                   )}
                   onClick={() => setSelectedOverlayType('image')}
+                  disabled={isUploading}
                 >
                   <ImageIcon className="w-6 h-6" />
                   <span className="text-sm">Image</span>
@@ -217,6 +163,7 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
                     selectedOverlayType === 'video' && "border-purple-400 bg-purple-500/10"
                   )}
                   onClick={() => setSelectedOverlayType('video')}
+                  disabled={isUploading}
                 >
                   <Video className="w-6 h-6" />
                   <span className="text-sm">Video</span>
@@ -232,20 +179,30 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
                         accept={selectedOverlayType === 'image' ? 'image/*' : 'video/*'}
                         onChange={(e) => {
                           const file = e.target.files?.[0];
-                          if (file) {
+                          if (file && !isUploading) {
                             handleOverlayUpload(file);
                           }
                         }}
                         className="hidden"
+                        disabled={isUploading}
                       />
                       <div className="text-center">
-                        <Upload className="w-8 h-8 text-zinc-500 mx-auto mb-2" />
-                        <p className="text-sm text-zinc-400">
-                          Click to upload {selectedOverlayType}
-                        </p>
-                        <p className="text-xs text-zinc-500 mt-1">
-                          {selectedOverlayType === 'image' ? 'JPG, PNG, GIF' : 'MP4, MOV, AVI'}
-                        </p>
+                        {isUploading ? (
+                          <>
+                            <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                            <p className="text-sm text-purple-400">Uploading...</p>
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-8 h-8 text-zinc-500 mx-auto mb-2" />
+                            <p className="text-sm text-zinc-400">
+                              Click to upload {selectedOverlayType}
+                            </p>
+                            <p className="text-xs text-zinc-500 mt-1">
+                              {selectedOverlayType === 'image' ? 'JPG, PNG, GIF' : 'MP4, MOV, AVI'}
+                            </p>
+                          </>
+                        )}
                       </div>
                     </div>
                   </label>
@@ -258,7 +215,9 @@ export function OverlayControls({ selectedClip, currentTime }: OverlayControlsPr
         {/* Overlay track info with icon */}
         <div className="flex items-center gap-1 text-xs text-zinc-500">
           <Layers className="w-4 h-4 text-purple-400" />
-          <span>{project.tracks.find(t => t.type === 'overlay')?.clips.length || 0} overlay{(project.tracks.find(t => t.type === 'overlay')?.clips.length || 0) !== 1 ? 's' : ''}</span>
+          <span>
+            {overlayCount} overlay{overlayCount !== 1 ? 's' : ''}
+          </span>
         </div>
       </div>
 
