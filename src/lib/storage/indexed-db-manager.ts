@@ -80,7 +80,17 @@ class IndexedDBManager {
   private db: IDBPDatabase<CreativeSuiteDB> | null = null;
   private initPromise: Promise<void> | null = null;
   
+  private isClientSide(): boolean {
+    return typeof window !== 'undefined' && typeof indexedDB !== 'undefined';
+  }
+  
   async initialize(): Promise<void> {
+    // Skip initialization if not in browser environment
+    if (!this.isClientSide()) {
+      console.warn('IndexedDB not available (server-side rendering)');
+      return;
+    }
+    
     if (this.db) return;
     if (this.initPromise) return this.initPromise;
     
@@ -138,6 +148,10 @@ class IndexedDBManager {
   // ===== CHUNKED FILE STORAGE =====
   
   async storeMediaAsset(file: File): Promise<string> {
+    if (!this.isClientSide()) {
+      throw new Error('IndexedDB not available (server-side rendering)');
+    }
+    
     await this.initialize();
     if (!this.db) throw new Error('Database not initialized');
     
@@ -411,5 +425,7 @@ class IndexedDBManager {
 // Singleton instance
 export const indexedDBManager = new IndexedDBManager();
 
-// Initialize on import
-indexedDBManager.initialize().catch(console.error); 
+// Only initialize on client side (browser environment)
+if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
+  indexedDBManager.initialize().catch(console.error);
+} 
