@@ -18,7 +18,7 @@ import {
   Keyframe,
   KeyframeInsert
 } from '@/types/database';
-import { deviceFingerprint } from '@/lib/device/device-fingerprint';
+// Removed device fingerprint - using simplified user-only approach
 
 export class TimelineService {
   private static supabase = createClient();
@@ -552,17 +552,15 @@ export class TimelineService {
   }
 
   /**
-   * Save recovery point for project
+   * Save recovery point for project (simplified)
    */
   static async saveRecoveryPoint(projectId: string, projectState: any, assetManifest: any[]): Promise<boolean> {
     try {
-      const fingerprint = await deviceFingerprint.getFingerprint();
-
       const { error } = await this.supabase
         .from('project_recovery_points')
         .insert({
           project_id: projectId,
-          device_fingerprint: fingerprint,
+          device_fingerprint: 'simplified', // Using placeholder for simplified approach
           project_state: projectState,
           asset_manifest: assetManifest,
           auto_generated: true

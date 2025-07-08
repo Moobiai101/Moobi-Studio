@@ -1,7 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { UserAsset } from "@/types/database";
 import { indexedDBManager } from '@/lib/storage/indexed-db-manager';
-import { deviceFingerprint } from '@/lib/device/device-fingerprint';
 import { 
   getMediaDuration, 
   getVideoMetadata, 
@@ -43,9 +42,7 @@ export class MediaAssetService {
         return { success: false, error: 'User not authenticated' };
       }
 
-      // Register device if not already done
-      const deviceId = await deviceFingerprint.registerDevice();
-      const fingerprint = await deviceFingerprint.getFingerprint();
+      // No device registration needed in simplified approach
 
       // Update status
       options.onStatusChange?.('Storing file locally...');
@@ -108,13 +105,14 @@ export class MediaAssetService {
         file_size_bytes: file.size,
         source_studio: 'video-studio',
           local_asset_id: localAssetId,
-          device_fingerprint: fingerprint,
           r2_object_key: localAssetId, // Use local ID as key
           duration_seconds: duration,
           dimensions,
           video_metadata: videoMetadata,
           thumbnails_generated: fileType === 'video',
-          tags: []
+          tags: [],
+          is_local_available: true, // Set local availability
+          local_storage_key: localAssetId
         })
         .select()
         .single();
@@ -122,19 +120,6 @@ export class MediaAssetService {
       if (assetError) {
         throw assetError;
       }
-
-      options.onProgress?.(90);
-
-      // Create device mapping record
-      await this.supabase
-        .from('asset_device_mapping')
-        .insert({
-          asset_id: asset.id,
-          device_fingerprint: fingerprint,
-          is_available: true,
-          local_path: localAssetId,
-          file_hash: null // TODO: Implement file hashing
-        });
 
       options.onProgress?.(100);
       options.onStatusChange?.('Upload complete!');
@@ -151,7 +136,7 @@ export class MediaAssetService {
   }
 
   /**
-   * Get all user assets with local availability info
+   * Get all user assets (simplified user-only approach)
    */
   static async getUserAssets(): Promise<UserAsset[]> {
     try {
@@ -161,9 +146,7 @@ export class MediaAssetService {
         return [];
       }
 
-      const fingerprint = await deviceFingerprint.getFingerprint();
-
-      // Get all user assets
+      // Get all user assets (simple query)
       const { data: assets, error } = await this.supabase
         .from('user_assets')
         .select('*')
@@ -175,45 +158,16 @@ export class MediaAssetService {
         return [];
       }
 
-      // Check local availability for each asset
-      const assetsWithAvailability = await Promise.all(
-        assets.map(async (asset) => {
-          try {
-                      // Check if asset is available on this device
-            const { data: mapping, error } = await this.supabase
-            .from('asset_device_mapping')
-            .select('is_available, local_path')
-            .eq('asset_id', asset.id)
-            .eq('device_fingerprint', fingerprint)
-            .maybeSingle(); // Use maybeSingle() to handle 0 rows gracefully
+      if (!assets) {
+        return [];
+      }
 
-            // Handle real errors (not PGRST116 which is expected for new assets)
-            if (error && error.code !== 'PGRST116') {
-              console.error('Error checking asset availability:', error);
-              throw new Error(`Failed to check asset availability: ${error.message}`);
-            }
-
-          return {
-            ...asset,
-            _localAvailable: mapping?.is_available || false,
-            _localPath: mapping?.local_path
-          };
-          } catch (error) {
-            // Only throw on real errors, not on expected PGRST116 (no rows found)
-            if (error instanceof Error && !error.message.includes('PGRST116')) {
-              console.error('Error checking asset availability:', error);
-              throw error;
-            }
-            
-            // For PGRST116 or other expected cases, treat as no mapping available
-            return {
-              ...asset,
-              _localAvailable: !!asset.local_asset_id,
-              _localPath: asset.local_asset_id
-            };
-          }
-        })
-      );
+      // Add local availability info (simplified)
+      const assetsWithAvailability = assets.map((asset) => ({
+        ...asset,
+        _localAvailable: asset.is_local_available || !!asset.local_asset_id,
+        _localPath: asset.local_storage_key || asset.local_asset_id
+      }));
 
       return assetsWithAvailability;
     } catch (error) {
@@ -307,7 +261,7 @@ export class MediaAssetService {
   }
 
   /**
-   * Request asset recovery (for cross-device sync)
+   * Request asset recovery (simplified)
    */
   static async requestAssetRecovery(assetId: string): Promise<{
     needsUpload: boolean;
@@ -325,18 +279,11 @@ export class MediaAssetService {
         return { needsUpload: false };
       }
 
-      const fingerprint = await deviceFingerprint.getFingerprint();
-
-      // Check if available locally
-      const { data: mapping } = await this.supabase
-        .from('asset_device_mapping')
-        .select('is_available')
-        .eq('asset_id', assetId)
-        .eq('device_fingerprint', fingerprint)
-        .single();
+      // Check if available locally (simplified)
+      const isLocallyAvailable = asset.is_local_available && asset.local_storage_key;
 
       return {
-        needsUpload: !mapping?.is_available,
+        needsUpload: !isLocallyAvailable,
         assetInfo: {
           filename: asset.file_name,
           contentType: asset.content_type,

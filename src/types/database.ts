@@ -67,9 +67,10 @@ export interface Database {
           video_metadata?: Json
           created_at: string
           updated_at: string
-          // New local-first fields
+          // Simplified local storage fields
           local_asset_id?: string
-          device_fingerprint?: string
+          is_local_available?: boolean
+          local_storage_key?: string
           thumbnails_generated: boolean
           filmstrip_generated: boolean
           ai_generated: boolean
@@ -94,7 +95,8 @@ export interface Database {
           created_at?: string
           updated_at?: string
           local_asset_id?: string
-          device_fingerprint?: string
+          is_local_available?: boolean
+          local_storage_key?: string
           thumbnails_generated?: boolean
           filmstrip_generated?: boolean
           ai_generated?: boolean
@@ -119,7 +121,8 @@ export interface Database {
           created_at?: string
           updated_at?: string
           local_asset_id?: string
-          device_fingerprint?: string
+          is_local_available?: boolean
+          local_storage_key?: string
           thumbnails_generated?: boolean
           filmstrip_generated?: boolean
           ai_generated?: boolean
@@ -144,7 +147,7 @@ export interface Database {
           export_settings: Json
           project_data: Json
           timeline_data: Json
-          last_edited_device?: string
+          last_edited_device_fkey?: string | null // Made nullable since device constraint removed
           tags: string[]
           is_template: boolean
           created_at: string
@@ -161,7 +164,7 @@ export interface Database {
           export_settings?: Json
           project_data?: Json
           timeline_data?: Json
-          last_edited_device?: string
+          last_edited_device_fkey?: string | null
           tags?: string[]
           is_template?: boolean
           created_at?: string
@@ -178,7 +181,7 @@ export interface Database {
           export_settings?: Json
           project_data?: Json
           timeline_data?: Json
-          last_edited_device?: string
+          last_edited_device_fkey?: string | null
           tags?: string[]
           is_template?: boolean
           created_at?: string
@@ -597,38 +600,7 @@ export interface Database {
         }
       }
 
-      asset_device_mapping: {
-        Row: {
-          id: string
-          asset_id: string
-          device_fingerprint: string
-          is_available: boolean
-          last_verified: string
-          local_path?: string
-          file_hash?: string
-          created_at: string
-        }
-        Insert: {
-          id?: string
-          asset_id: string
-          device_fingerprint: string
-          is_available?: boolean
-          last_verified?: string
-          local_path?: string
-          file_hash?: string
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          asset_id?: string
-          device_fingerprint?: string
-          is_available?: boolean
-          last_verified?: string
-          local_path?: string
-          file_hash?: string
-          created_at?: string
-        }
-      }
+      // asset_device_mapping table removed in simplified user-only approach
 
       // ============================================================================
       // PROJECT EXPORTS
@@ -785,9 +757,7 @@ export type ProjectRecoveryPoint = Database['public']['Tables']['project_recover
 export type ProjectRecoveryPointInsert = Database['public']['Tables']['project_recovery_points']['Insert']
 export type ProjectRecoveryPointUpdate = Database['public']['Tables']['project_recovery_points']['Update']
 
-export type AssetDeviceMapping = Database['public']['Tables']['asset_device_mapping']['Row']
-export type AssetDeviceMappingInsert = Database['public']['Tables']['asset_device_mapping']['Insert']
-export type AssetDeviceMappingUpdate = Database['public']['Tables']['asset_device_mapping']['Update']
+// AssetDeviceMapping types removed - table dropped in simplified user-only approach
 
 export type ProjectExport = Database['public']['Tables']['project_exports']['Row']
 export type ProjectExportInsert = Database['public']['Tables']['project_exports']['Insert']

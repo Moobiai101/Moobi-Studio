@@ -5,7 +5,6 @@ import { useStore } from "zustand";
 import { createVideoProjectStore, type VideoProjectStore, type VideoProjectState } from "../store/video-project-store";
 import { VideoProjectService } from "@/services/video-projects";
 import { MediaAssetService } from "@/services/media-assets";
-import { DeviceService } from "@/services/device-service";
 import { VideoEditorProject } from "@/types/database";
 import { VideoProjectList } from "../components/video-project-list";
 
@@ -30,10 +29,7 @@ export function VideoProjectProvider({
     const initializeProject = async () => {
       setIsLoading(true);
       
-      try {
-        // Ensure device is registered before any data operations
-        await DeviceService.registerDevice();
-        
+      try {        
         let project: VideoEditorProject;
         
         if (projectId) {
@@ -90,9 +86,6 @@ export function VideoProjectProvider({
     setIsLoading(true);
     
     try {
-      // Ensure device is registered before any data operations
-      await DeviceService.registerDevice();
-      
       // Update the store with the new project
       if (storeRef.current) {
         // Load the project data

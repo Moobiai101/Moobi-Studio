@@ -7,7 +7,6 @@ import {
   ProjectTimelineData 
 } from '@/types/database';
 import { TimelineService } from './timeline-service';
-import { deviceFingerprint } from '@/lib/device/device-fingerprint';
 
 const supabase = createClient();
 
@@ -18,10 +17,7 @@ export class VideoProjectService {
     if (!user) throw new Error('User not authenticated');
 
     try {
-      // Get device fingerprint for tracking
-      const fingerprint = await deviceFingerprint.getFingerprint();
-
-      // Create project with new local-first schema
+      // Create project with simplified user-only schema
       const projectData: VideoEditorProjectInsert = {
         user_id: user.id,
         title,
@@ -53,7 +49,7 @@ export class VideoProjectService {
         scroll: 0,
           snapToGrid: true
         },
-        last_edited_device: fingerprint,
+        last_edited_device_fkey: null, // No device tracking in simplified approach
         tags: [],
         is_template: false
     };
@@ -137,13 +133,10 @@ export class VideoProjectService {
     updates: VideoEditorProjectUpdate
   ): Promise<VideoEditorProject> {
     try {
-      const fingerprint = await deviceFingerprint.getFingerprint();
-      
     const { data, error } = await supabase
       .from('video_editor_projects')
       .update({
         ...updates,
-          last_edited_device: fingerprint,
         updated_at: new Date().toISOString()
       })
       .eq('id', projectId)
@@ -164,13 +157,10 @@ export class VideoProjectService {
     timelineData: any
   ): Promise<void> {
     try {
-      const fingerprint = await deviceFingerprint.getFingerprint();
-      
     const { error } = await supabase
       .from('video_editor_projects')
       .update({
           timeline_data: timelineData,
-          last_edited_device: fingerprint,
         updated_at: new Date().toISOString()
       })
       .eq('id', projectId);
@@ -182,7 +172,7 @@ export class VideoProjectService {
     }
   }
 
-  // Auto-save project state
+  // Auto-save project state (simplified)
   static async autoSaveProject(
     projectId: string, 
     projectState: any,
@@ -197,11 +187,9 @@ export class VideoProjectService {
       );
 
       // Update project timestamp
-      const fingerprint = await deviceFingerprint.getFingerprint();
       await supabase
       .from('video_editor_projects')
       .update({
-          last_edited_device: fingerprint,
           updated_at: new Date().toISOString()
       })
       .eq('id', projectId);
@@ -226,15 +214,12 @@ export class VideoProjectService {
     }
   }
 
-  // Update last opened timestamp
+  // Update last opened timestamp (simplified)
   static async updateLastOpened(projectId: string): Promise<void> {
     try {
-      const fingerprint = await deviceFingerprint.getFingerprint();
-      
     const { error } = await supabase
       .from('video_editor_projects')
       .update({
-          last_edited_device: fingerprint,
           updated_at: new Date().toISOString()
       })
       .eq('id', projectId);

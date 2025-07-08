@@ -7,7 +7,6 @@ import {
   UserAssetInsert
 } from '@/types/database';
 import { MediaAssetService } from './media-assets';
-import { deviceFingerprint } from '@/lib/device/device-fingerprint';
 
 const supabase = createClient();
 
@@ -45,7 +44,7 @@ export class AIGenerationService {
         progress: 0,
         generation_metadata: {
           started_at: new Date().toISOString(),
-          device_fingerprint: await deviceFingerprint.getFingerprint(),
+          device_fingerprint: 'simplified', // Using simplified user-only approach
           model_version: options.aiModel,
           estimated_duration: this.estimateGenerationTime(generationType, options.parameters)
         }

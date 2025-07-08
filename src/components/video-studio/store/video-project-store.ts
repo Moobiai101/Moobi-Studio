@@ -1,7 +1,7 @@
 import { createStore } from "zustand";
 import { VideoProjectService, createAutoSave, createTimelineSave } from "@/services/video-projects";
 import { TimelineService } from "@/services/timeline-service";
-import { DeviceService } from "@/services/device-service";
+// Removed DeviceService - using simplified user-only approach
 import { 
   VideoEditorProject, 
   UserAsset, 
@@ -352,8 +352,7 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
       initializeProject: async (projectId: string) => {
         set({ isLoading: true });
         try {
-          // Register device
-          await DeviceService.registerDevice();
+          // Device registration no longer needed in simplified approach
           
           // Load project with timeline data
           const { project, timeline } = await VideoProjectService.getProjectWithTimeline(projectId);
@@ -392,8 +391,7 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
             gridSize: getTimelineDataProperty(project.timeline_data, 'gridSize', 1)
           });
           
-          // Update device activity
-          await DeviceService.updateDeviceActivity();
+          // Device activity tracking removed in simplified approach
           
         } catch (error) {
           console.error('Error initializing project:', error);
@@ -937,29 +935,16 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
       // ============================================================================
 
       updateDeviceActivity: async () => {
-        try {
-          await DeviceService.updateDeviceActivity();
-          set({ deviceSyncStatus: 'synced' });
-      } catch (error) {
-          console.error('Error updating device activity:', error);
-          set({ deviceSyncStatus: 'offline' });
-        }
+        // Device activity tracking removed in simplified user-only approach
+        set({ deviceSyncStatus: 'synced' });
       },
 
       checkSyncStatus: async () => {
-        try {
-          const state = get();
-          if (!state.project) return;
-          
-          const syncStatus = await DeviceService.getProjectSyncStatus(state.project.id);
-          set({
-            availableDevices: syncStatus.totalDevices,
-            deviceSyncStatus: syncStatus.syncedDevices > 0 ? 'synced' : 'syncing'
-          });
-        } catch (error) {
-          console.error('Error checking sync status:', error);
-          set({ deviceSyncStatus: 'offline' });
-        }
+        // Sync status checking simplified in user-only approach
+        set({
+          availableDevices: 1, // Single user, single device
+          deviceSyncStatus: 'synced'
+        });
       },
 
       resolveConflicts: async () => {
