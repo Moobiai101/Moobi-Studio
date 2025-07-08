@@ -39,7 +39,12 @@ export function MediaPanel() {
   // Filter media assets based on search query
   const filteredAssets = mediaAssets.filter((asset: any) => {
     const mediaInfo = getMediaInfo(asset);
-    return mediaInfo.name.toLowerCase().includes(searchQuery.toLowerCase());
+    const name = mediaInfo?.name ?? '';
+    const query = searchQuery ?? '';
+    // Add null safety checks
+    return name && typeof name === 'string' 
+      ? name.toLowerCase().includes(query.toLowerCase())
+      : false;
   });
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {

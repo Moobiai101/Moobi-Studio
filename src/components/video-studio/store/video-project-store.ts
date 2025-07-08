@@ -57,7 +57,9 @@ export const getMediaInfo = (asset: UserAsset) => {
   return {
     type: isVideo ? 'video' : isAudio ? 'audio' : 'image' as 'video' | 'audio' | 'image',
     url: asset.local_asset_id ? `indexeddb://${asset.local_asset_id}` : MediaAssetService.getAssetUrl(asset.r2_object_key),
-    name: asset.title,
+    name: (asset.title && typeof asset.title === 'string' ? asset.title : '') || 
+          (asset.file_name && typeof asset.file_name === 'string' ? asset.file_name : '') || 
+          'Untitled Asset',
     duration: asset.duration_seconds,
     metadata: {
       width: dimensions.width,

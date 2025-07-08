@@ -427,5 +427,5 @@ export const indexedDBManager = new IndexedDBManager();
 
 // Only initialize on client side (browser environment)
 if (typeof window !== 'undefined' && typeof indexedDB !== 'undefined') {
-  indexedDBManager.initialize().catch(console.error);
+indexedDBManager.initialize().catch(console.error); 
 } 
