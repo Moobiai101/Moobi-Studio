@@ -179,16 +179,16 @@ export class MediaAssetService {
       const assetsWithAvailability = await Promise.all(
         assets.map(async (asset) => {
           try {
-          // Check if asset is available on this device
+                      // Check if asset is available on this device
             const { data: mapping, error } = await this.supabase
             .from('asset_device_mapping')
             .select('is_available, local_path')
             .eq('asset_id', asset.id)
             .eq('device_fingerprint', fingerprint)
-            .single();
+            .maybeSingle(); // Use maybeSingle() to handle 0 rows gracefully
 
-            // Handle permission errors - throw to surface the real issue
-            if (error) {
+            // Handle real errors (not PGRST116 which is expected for new assets)
+            if (error && error.code !== 'PGRST116') {
               console.error('Error checking asset availability:', error);
               throw new Error(`Failed to check asset availability: ${error.message}`);
             }
@@ -199,9 +199,18 @@ export class MediaAssetService {
             _localPath: mapping?.local_path
           };
           } catch (error) {
-            console.error('Error checking asset availability:', error);
-            // Re-throw to surface the real issue instead of falling back
-            throw error;
+            // Only throw on real errors, not on expected PGRST116 (no rows found)
+            if (error instanceof Error && !error.message.includes('PGRST116')) {
+              console.error('Error checking asset availability:', error);
+              throw error;
+            }
+            
+            // For PGRST116 or other expected cases, treat as no mapping available
+            return {
+              ...asset,
+              _localAvailable: !!asset.local_asset_id,
+              _localPath: asset.local_asset_id
+            };
           }
         })
       );
