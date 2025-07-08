@@ -71,7 +71,7 @@ export class DeviceService {
   }
 
   /**
-   * Register current device for user
+   * Register current device for user using the secure database function
    */
   static async registerDevice(deviceName?: string): Promise<UserDevice | null> {
     try {
@@ -81,46 +81,38 @@ export class DeviceService {
       const fingerprint = await deviceFingerprint.getFingerprint();
       const browserInfo = await this.getBrowserInfo();
 
-      // Check if device already exists
-      const { data: existingDevice } = await supabase
-        .from('user_devices')
-        .select('*')
-        .eq('device_fingerprint', fingerprint)
-        .eq('user_id', user.id)
-        .single();
-
-      if (existingDevice) {
-        // Update existing device
-        return await this.updateDevice(existingDevice.id, {
-          device_name: deviceName || existingDevice.device_name,
-          browser_info: browserInfo,
-          last_active: new Date().toISOString()
-        });
-      }
-
       // Generate device name if not provided
       const autoDeviceName = deviceName || this.generateDeviceName(browserInfo);
 
-      const deviceData: UserDeviceInsert = {
-        user_id: user.id,
-        device_fingerprint: fingerprint,
-        device_name: autoDeviceName,
-        browser_info: browserInfo,
-        last_active: new Date().toISOString(),
-        is_primary: await this.shouldSetAsPrimary(user.id)
-      };
+      // Use the secure database function to register the device
+      const { data: deviceId, error } = await supabase.rpc('register_user_device', {
+        p_device_fingerprint: fingerprint,
+        p_device_name: autoDeviceName,
+        p_browser_info: browserInfo
+      });
 
-      const { data, error } = await supabase
+      if (error) {
+        console.error('Error registering device with database function:', error);
+        throw error;
+      }
+
+      // Fetch the complete device record
+      const { data: device, error: fetchError } = await supabase
         .from('user_devices')
-        .insert(deviceData)
-        .select()
+        .select('*')
+        .eq('id', deviceId)
         .single();
 
-      if (error) throw error;
-      return data;
+      if (fetchError) {
+        console.error('Error fetching registered device:', fetchError);
+        throw fetchError;
+      }
+
+      return device;
     } catch (error) {
       console.error('Error registering device:', error);
-      return null;
+      // Don't return null - throw the error to surface the real issue
+      throw error;
     }
   }
 

@@ -187,14 +187,10 @@ export class MediaAssetService {
             .eq('device_fingerprint', fingerprint)
             .single();
 
-            // Handle table not found or permission errors gracefully
-            if (error && (error.code === 'PGRST116' || error.message?.includes('406'))) {
-              console.warn('asset_device_mapping table not available, using local-first fallback');
-              return {
-                ...asset,
-                _localAvailable: !!asset.local_asset_id,
-                _localPath: asset.local_asset_id
-              };
+            // Handle permission errors - throw to surface the real issue
+            if (error) {
+              console.error('Error checking asset availability:', error);
+              throw new Error(`Failed to check asset availability: ${error.message}`);
             }
 
           return {
@@ -203,12 +199,9 @@ export class MediaAssetService {
             _localPath: mapping?.local_path
           };
           } catch (error) {
-            console.warn('Error checking asset availability:', error);
-            return {
-              ...asset,
-              _localAvailable: !!asset.local_asset_id,
-              _localPath: asset.local_asset_id
-            };
+            console.error('Error checking asset availability:', error);
+            // Re-throw to surface the real issue instead of falling back
+            throw error;
           }
         })
       );

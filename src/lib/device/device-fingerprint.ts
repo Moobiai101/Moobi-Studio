@@ -170,58 +170,24 @@ export class DeviceFingerprint {
   }
   
   /**
-   * Register device with backend
+   * Register device with backend using DeviceService
    */
   async registerDevice(deviceName?: string): Promise<string> {
-    const supabase = createClient();
-    const fingerprint = await this.generateFingerprint();
+    const { DeviceService } = await import('@/services/device-service');
     
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) throw new Error('User not authenticated');
-    
-    // Check if device already exists
-    const { data: existingDevice } = await supabase
-      .from('user_devices')
-      .select('id')
-      .eq('device_fingerprint', fingerprint)
-      .single();
-    
-    if (existingDevice) {
-      // Update last active
-      await supabase
-        .from('user_devices')
-        .update({ last_active: new Date().toISOString() })
-        .eq('id', existingDevice.id);
+    try {
+      const device = await DeviceService.registerDevice(deviceName || this.generateDeviceName());
       
-      this.deviceId = existingDevice.id;
-      return existingDevice.id;
+      if (!device) {
+        throw new Error('Failed to register device');
+      }
+      
+      this.deviceId = device.id;
+      return device.id;
+    } catch (error) {
+      console.error('Error registering device:', error);
+      throw error;
     }
-    
-    // Create new device record
-    const browserInfo = {
-      userAgent: navigator.userAgent,
-      platform: navigator.platform,
-      vendor: navigator.vendor,
-      language: navigator.language,
-      screenResolution: `${screen.width}x${screen.height}`,
-      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
-    };
-    
-    const { data: newDevice, error } = await supabase
-      .from('user_devices')
-      .insert({
-        user_id: user.id,
-        device_fingerprint: fingerprint,
-        device_name: deviceName || this.generateDeviceName(),
-        browser_info: browserInfo
-      })
-      .select()
-      .single();
-    
-    if (error) throw error;
-    
-    this.deviceId = newDevice.id;
-    return newDevice.id;
   }
   
   /**
