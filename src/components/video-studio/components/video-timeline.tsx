@@ -641,8 +641,8 @@ export function VideoTimeline() {
   const FRAME_RATE = 30; // Frames per second
   const FRAME_DURATION = 1 / FRAME_RATE; // Duration of one frame in seconds
 
-  // URL resolution cache for audio engine
   const [resolvedUrls, setResolvedUrls] = useState<Map<string, string>>(new Map());
+  const [areUrlsResolving, setAreUrlsResolving] = useState(true);
   
   // Debug mediaAssets immediately
   console.log('🔍 VideoTimeline render - mediaAssets:', mediaAssets.length, mediaAssets.map(a => ({ id: a.id, localId: a.local_asset_id })));
@@ -686,6 +686,7 @@ export function VideoTimeline() {
     
     const resolveAllUrls = async () => {
       console.log('🔄 Starting URL resolution for', localAssets.length, 'local assets');
+      setAreUrlsResolving(true);
       
       const urlsToResolve: { id: string; url: string }[] = [];
       
@@ -728,12 +729,16 @@ export function VideoTimeline() {
       } catch (importError) {
         console.error('❌ Failed to import MediaUrlResolver:', importError);
         setResolvedUrls(new Map());
+      } finally {
+        console.log('✅ URL resolution process finished.');
+        setAreUrlsResolving(false);
       }
     };
     
     resolveAllUrls().catch(error => {
       console.error('❌ URL resolution failed:', error);
       setResolvedUrls(new Map());
+      setAreUrlsResolving(false);
     });
     
     // React best practice: explicit dependency validation
@@ -1186,8 +1191,24 @@ export function VideoTimeline() {
 
   // Sync audio tracks with timeline clips - only when URLs are resolved
   useEffect(() => {
-    // Skip if no media assets or URLs not yet resolved
-    if (mediaAssets.length === 0) return;
+    console.log('🎵 Sync audio effect triggered.', { areUrlsResolving });
+    
+    // Production-grade check: only sync when resolution is complete
+    if (areUrlsResolving) {
+      console.log('🔄 Waiting for URL resolution to complete before syncing audio.');
+      return;
+    }
+    
+    // Skip if no media assets are present
+    if (mediaAssets.length === 0) {
+      console.log('✅ No media assets to sync for audio.');
+      return;
+    }
+    
+    console.log('🎵 Syncing audio tracks...', {
+      totalAssets: mediaAssets.length,
+      resolvedUrls: resolvedUrls.size
+    });
     
     // Check if all local assets have been resolved
     const localAssets = mediaAssets.filter(asset => asset.local_asset_id);
@@ -1197,12 +1218,6 @@ export function VideoTimeline() {
       console.log('🔄 Waiting for URL resolution to complete...');
       return;
     }
-    
-    console.log('🎵 URL resolution complete, syncing audio tracks...', {
-      totalAssets: mediaAssets.length,
-      localAssets: localAssets.length,
-      resolvedUrls: resolvedUrls.size
-    });
     
     const timelineClips = getAllClips();
     
@@ -1257,8 +1272,8 @@ export function VideoTimeline() {
     });
     
     // Note: We don't remove tracks here to avoid complexity, they'll be cleaned up on unmount
-  }, [clips.length, JSON.stringify(clips.map(c => ({id: c.id, volume: c.volume, muted: c.muted}))), resolvedUrls, mediaAssets]);
-
+  }, [clips.length, JSON.stringify(clips.map(c => ({id: c.id, volume: c.volume, muted: c.muted}))), mediaAssets, areUrlsResolving]);
+  
   // Note: Remotion video elements are muted at source level in video-preview.tsx and video-composition.tsx
 
   // Sync audio engine with timeline playback
