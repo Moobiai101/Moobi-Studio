@@ -647,30 +647,54 @@ export function VideoTimeline() {
   // Debug mediaAssets immediately
   console.log('🔍 VideoTimeline render - mediaAssets:', mediaAssets.length, mediaAssets.map(a => ({ id: a.id, localId: a.local_asset_id })));
   
-  // Pre-resolve all IndexedDB URLs for audio playback
+  // Debug when mediaAssets change (React best practice for debugging state)
   useEffect(() => {
+    console.log('🔍 MediaAssets state changed:', {
+      count: mediaAssets.length,
+      assets: mediaAssets.map(a => {
+        const mediaInfo = getMediaInfo(a);
+        return { 
+          id: a.id, 
+          localId: a.local_asset_id,
+          hasLocalId: !!a.local_asset_id,
+          url: mediaInfo.url
+        };
+      })
+    });
+  }, [mediaAssets]);
+  
+  // Pre-resolve all IndexedDB URLs for audio playback - PRODUCTION GRADE APPROACH
+  useEffect(() => {
+    // Validate dependencies first (React best practice)
+    if (!mediaAssets || !Array.isArray(mediaAssets)) {
+      console.log('🔍 URL resolution effect: mediaAssets invalid', { mediaAssets });
+      return;
+    }
+    
     console.log('🔍 URL resolution effect triggered. MediaAssets length:', mediaAssets.length);
     console.log('🔍 MediaAssets:', mediaAssets.map(a => ({ id: a.id, hasLocalId: !!a.local_asset_id, localId: a.local_asset_id })));
     
+    // Extract local assets for processing
+    const localAssets = mediaAssets.filter(asset => asset.local_asset_id);
+    console.log('🔍 Found local assets to resolve:', localAssets.length);
+    
+    if (localAssets.length === 0) {
+      console.log('✅ No IndexedDB URLs to resolve');
+      setResolvedUrls(new Map());
+      return;
+    }
+    
     const resolveAllUrls = async () => {
-      console.log('🔄 Starting URL resolution for media assets:', mediaAssets.length);
+      console.log('🔄 Starting URL resolution for', localAssets.length, 'local assets');
       
       const urlsToResolve: { id: string; url: string }[] = [];
       
       // Collect all IndexedDB URLs from media assets
-      mediaAssets.forEach(asset => {
-        if (asset.local_asset_id) {
-          const indexedDbUrl = `indexeddb://${asset.local_asset_id}`;
-          urlsToResolve.push({ id: asset.id, url: indexedDbUrl });
-          console.log('📋 Found local asset to resolve:', { id: asset.id, url: indexedDbUrl });
-        }
+      localAssets.forEach(asset => {
+        const indexedDbUrl = `indexeddb://${asset.local_asset_id}`;
+        urlsToResolve.push({ id: asset.id, url: indexedDbUrl });
+        console.log('📋 Found local asset to resolve:', { id: asset.id, url: indexedDbUrl });
       });
-      
-      if (urlsToResolve.length === 0) {
-        console.log('✅ No IndexedDB URLs to resolve');
-        setResolvedUrls(new Map());
-        return;
-      }
       
       console.log('🔄 Resolving', urlsToResolve.length, 'IndexedDB URLs...');
       
@@ -697,6 +721,9 @@ export function VideoTimeline() {
         const results = await Promise.all(resolutionPromises);
         console.log('🎵 URL resolution results:', results);
         console.log('🎵 URL resolution complete. Resolved URLs:', newResolvedUrls.size);
+        console.log('🎵 Resolved URL keys:', Array.from(newResolvedUrls.keys()));
+        
+        // Update state with resolved URLs
         setResolvedUrls(newResolvedUrls);
       } catch (importError) {
         console.error('❌ Failed to import MediaUrlResolver:', importError);
@@ -708,7 +735,9 @@ export function VideoTimeline() {
       console.error('❌ URL resolution failed:', error);
       setResolvedUrls(new Map());
     });
-  }, [mediaAssets]);
+    
+    // React best practice: explicit dependency validation
+  }, [mediaAssets]); // Only mediaAssets needed - keep dependency array minimal
   
   // Enhanced getAllClips that includes resolved URLs
   const getAllClips = () => {
