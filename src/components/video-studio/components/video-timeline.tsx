@@ -1062,27 +1062,42 @@ export function VideoTimeline() {
   useEffect(() => {
     const timelineClips = getAllClips();
     
-    // Add new audio tracks for video and audio clips
-    timelineClips.forEach(clip => {
+    // Add new audio tracks for video and audio clips with URL resolution
+    timelineClips.forEach(async (clip) => {
       if ((clip.asset.type === 'video' || clip.asset.type === 'audio')) {
         // Check if track already exists by trying to get its state
         const existingTrack = audioEngine.getTrackState(clip.id);
         
         if (!existingTrack) {
+          // Resolve IndexedDB URLs to blob URLs for audio engine
+          let resolvedUrl = clip.asset.url;
+          
+          if (clip.asset.url.startsWith('indexeddb://')) {
+            try {
+              // Use MediaUrlResolver to get blob URL
+              const { MediaUrlResolver } = await import('@/lib/video/media-url-resolver');
+              resolvedUrl = await MediaUrlResolver.resolveUrl(clip.asset.url);
+              console.log('🎵 Resolved audio URL:', clip.asset.url, '->', resolvedUrl);
+            } catch (error) {
+              console.error('❌ Failed to resolve audio URL:', clip.asset.url, error);
+              // Continue with original URL as fallback
+            }
+          }
+          
           audioEngine.addTrack(
             clip.id,
-            clip.asset.url,
+            resolvedUrl, // Use resolved URL instead of raw IndexedDB URL
             clip.startTime,
             clip.endTime,
             clip.trimStart,
             clip.trimEnd
-          ).catch(error => {
+          ).then(() => {
+            // Apply current volume and mute state after track is successfully added
+            audioEngine.setTrackVolume(clip.id, clip.volume || 1);
+            audioEngine.setTrackMuted(clip.id, clip.muted || false);
+          }).catch(error => {
             console.warn('Failed to add audio track:', error);
           });
-          
-          // Apply current volume and mute state
-          audioEngine.setTrackVolume(clip.id, clip.volume || 1);
-          audioEngine.setTrackMuted(clip.id, clip.muted || false);
         }
       }
     });
