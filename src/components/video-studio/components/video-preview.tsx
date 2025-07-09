@@ -255,6 +255,7 @@ export function VideoPreview() {
             playbackRate={playbackRate}
             initiallyMuted={true}
             showVolumeControls={false}
+            acknowledgeRemotionLicense={true}
           />
           
           {/* Transform Controls Layer - Professional overlay system */}

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useResolvedMediaUrl } from "@/lib/video/media-url-resolver";
 
 // Add CSS for timeline animations
 const timelineStyles = `
@@ -96,6 +97,9 @@ function VideoClip({
   const filmstripsManager = useVideoFilmstripsContext();
   const [filmstripLoaded, setFilmstripLoaded] = useState(false);
   
+  // Production-grade URL resolution for IndexedDB URLs
+  const { url: resolvedUrl, isLoading: isResolvingUrl, error: urlError } = useResolvedMediaUrl(clip.asset.url);
+  
   // Memoize optimalFrameCount to prevent infinite re-renders
   const optimalFrameCount = useMemo(() => {
     return Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
@@ -114,7 +118,7 @@ function VideoClip({
 
   // Request filmstrip for video clips using professional editor standards with debouncing
   useEffect(() => {
-    if (clip.asset.type !== 'video' || !clip.asset.url || clipWidth <= 20) {
+    if (clip.asset.type !== 'video' || !resolvedUrl || clipWidth <= 20 || isResolvingUrl || urlError) {
       return;
     }
 
@@ -122,10 +126,10 @@ function VideoClip({
     const timeoutId = setTimeout(() => {
       const clipDuration = clip.end_time - clip.start_time;
       
-      // Request filmstrip with professional settings
+      // Request filmstrip with resolved URL (production-grade approach)
       filmstripsManager.requestFilmstrip(
         clip.id,
-        clip.asset.url,
+        resolvedUrl, // Use resolved URL instead of original
         clipDuration, // This is the display duration on the timeline
         clipWidth,
         {
@@ -136,7 +140,7 @@ function VideoClip({
     }, 100); // 100ms debounce
 
     return () => clearTimeout(timeoutId);
-  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, filmstripsManager, filmstripConfig]);
+  }, [clip.id, resolvedUrl, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, filmstripsManager, filmstripConfig, isResolvingUrl, urlError]);
   
   // Get filmstrip state
   const filmstrip = filmstripsManager.getFilmstrip(clip.id);
@@ -147,7 +151,7 @@ function VideoClip({
     setFilmstripLoaded(!!filmstrip);
   }, [filmstrip]);
   
-  // Calculate background styles for filmstrip
+  // Calculate background styles for filmstrip with URL resolution handling
   const backgroundStyles: React.CSSProperties = {};
   
   if (clip.asset.type === 'video' && filmstrip) {
@@ -159,16 +163,25 @@ function VideoClip({
     // Add image rendering for crisp display
     backgroundStyles.imageRendering = 'crisp-edges';
   } else if (clip.asset.type === 'video') {
-    // Loading or fallback state
-    backgroundStyles.backgroundColor = isLoadingFilmstrip ? '#3b82f6' : '#1e40af';
-    backgroundStyles.backgroundImage = isLoadingFilmstrip 
-      ? 'linear-gradient(90deg, #3b82f6 0%, #1d4ed8 50%, #3b82f6 100%)'
-      : undefined;
-    backgroundStyles.backgroundSize = isLoadingFilmstrip ? '200% 100%' : undefined;
-    backgroundStyles.animation = isLoadingFilmstrip ? 'shimmer 2s infinite linear' : undefined;
+    // Loading or fallback state (including URL resolution)
+    const isLoading = isLoadingFilmstrip || isResolvingUrl;
+    const hasError = urlError;
+    
+    if (hasError) {
+      backgroundStyles.backgroundColor = '#dc2626'; // Red for errors
+      backgroundStyles.backgroundImage = 'linear-gradient(45deg, #dc2626 25%, #ef4444 25%, #ef4444 50%, #dc2626 50%, #dc2626 75%, #ef4444 75%)';
+      backgroundStyles.backgroundSize = '8px 8px';
+    } else {
+      backgroundStyles.backgroundColor = isLoading ? '#3b82f6' : '#1e40af';
+      backgroundStyles.backgroundImage = isLoading 
+        ? 'linear-gradient(90deg, #3b82f6 0%, #1d4ed8 50%, #3b82f6 100%)'
+        : undefined;
+      backgroundStyles.backgroundSize = isLoading ? '200% 100%' : undefined;
+      backgroundStyles.animation = isLoading ? 'shimmer 2s infinite linear' : undefined;
+    }
   } else if (clip.asset.type === 'image') {
-    // Show actual image thumbnail with consistent sizing
-    backgroundStyles.backgroundImage = `url(${clip.asset.url})`;
+    // Show actual image thumbnail with resolved URL
+    backgroundStyles.backgroundImage = `url(${resolvedUrl || clip.asset.url})`;
     backgroundStyles.backgroundSize = 'auto 100%'; // Height fills clip, width maintains aspect ratio
     backgroundStyles.backgroundPosition = 'left center';
     backgroundStyles.backgroundRepeat = 'repeat-x'; // Repeat horizontally for long clips
@@ -207,10 +220,19 @@ function VideoClip({
           <div className="absolute inset-0 bg-purple-500/20 rounded"></div>
         )}
         
-        {/* Loading indicator for filmstrip */}
-        {clip.asset.type === 'video' && isLoadingFilmstrip && !filmstrip && (
+        {/* Loading indicator for filmstrip and URL resolution */}
+        {clip.asset.type === 'video' && (isLoadingFilmstrip || isResolvingUrl) && !filmstrip && (
           <div className="absolute inset-0 flex items-center justify-center bg-blue-600/20">
             <div className="w-3 h-3 border border-white/60 border-t-transparent rounded-full animate-spin"></div>
+          </div>
+        )}
+        
+        {/* Error indicator for URL resolution */}
+        {clip.asset.type === 'video' && urlError && (
+          <div className="absolute inset-0 flex items-center justify-center bg-red-600/20">
+            <div className="text-xs text-white/80 text-center px-1">
+              URL Error
+            </div>
           </div>
         )}
         
@@ -292,6 +314,9 @@ function OverlayClip({
   const filmstripsManager = useVideoFilmstripsContext();
   const [filmstripLoaded, setFilmstripLoaded] = useState(false);
   
+  // Production-grade URL resolution for IndexedDB URLs
+  const { url: resolvedUrl, isLoading: isResolvingUrl, error: urlError } = useResolvedMediaUrl(clip.asset.url);
+  
   // Memoize optimalFrameCount to prevent infinite re-renders
   const optimalFrameCount = useMemo(() => {
     return Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
@@ -310,7 +335,7 @@ function OverlayClip({
 
   // Request filmstrip for video overlays using professional editor standards with debouncing
   useEffect(() => {
-    if (clip.asset.type !== 'video' || !clip.asset.url || clipWidth <= 20) {
+    if (clip.asset.type !== 'video' || !resolvedUrl || clipWidth <= 20 || isResolvingUrl || urlError) {
       return;
     }
 
@@ -318,10 +343,10 @@ function OverlayClip({
     const timeoutId = setTimeout(() => {
       const clipDuration = clip.end_time - clip.start_time;
       
-      // Request filmstrip with professional settings
+      // Request filmstrip with resolved URL (production-grade approach)
       filmstripsManager.requestFilmstrip(
         clip.id,
-        clip.asset.url,
+        resolvedUrl, // Use resolved URL instead of original
         clipDuration, // This is the display duration on the timeline
         clipWidth,
         {
@@ -332,7 +357,7 @@ function OverlayClip({
     }, 100); // 100ms debounce
 
     return () => clearTimeout(timeoutId);
-  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, filmstripsManager, filmstripConfig]);
+  }, [clip.id, resolvedUrl, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, filmstripsManager, filmstripConfig, isResolvingUrl, urlError]);
   
   // Get filmstrip state
   const filmstrip = filmstripsManager.getFilmstrip(clip.id);

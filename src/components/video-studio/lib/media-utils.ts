@@ -98,9 +98,28 @@ export const detectFileType = (file: File): "video" | "audio" | "image" | "unkno
 };
 
 /**
- * Create thumbnail for video
+ * Create thumbnail for video with URL resolution support
  */
-export const createVideoThumbnail = (url: string, timeInSeconds = 1): Promise<string> => {
+export const createVideoThumbnail = async (url: string, timeInSeconds = 1): Promise<string> => {
+  const securityManager = VideoSecurityManager.getInstance();
+  
+  // Validate and resolve URL if needed
+  const validation = securityManager.validateVideoUrl(url);
+  if (!validation.isValid) {
+    throw new Error(`Security validation failed: ${validation.reason}`);
+  }
+
+  let resolvedUrl = url;
+  if (validation.needsResolution) {
+    try {
+      const { MediaUrlResolver } = await import('@/lib/video/media-url-resolver');
+      resolvedUrl = await MediaUrlResolver.resolveUrl(url);
+    } catch (error) {
+      console.error('Failed to resolve IndexedDB URL for thumbnail:', error);
+      throw new Error(`URL resolution failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     const canvas = document.createElement("canvas");
@@ -118,15 +137,19 @@ export const createVideoThumbnail = (url: string, timeInSeconds = 1): Promise<st
     });
     
     video.addEventListener("seeked", () => {
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      resolve(canvas.toDataURL("image/jpeg", 0.8));
+      try {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", 0.8));
+      } catch (drawError) {
+        reject(new Error(`Failed to draw video frame: ${drawError}`));
+      }
     });
     
     video.addEventListener("error", () => {
       reject(new Error("Failed to load video for thumbnail"));
     });
     
-    video.src = url;
+    video.src = resolvedUrl;
     video.load();
   });
 };
@@ -186,6 +209,7 @@ interface SecurityConfig {
   allowedMimeTypes: string[];
   corsStrategy: 'strict' | 'permissive' | 'custom';
   enableLogging: boolean;
+  allowIndexedDBUrls: boolean; // New: Allow IndexedDB URLs for local-first storage
 }
 
 /**
@@ -213,7 +237,8 @@ const DEFAULT_SECURITY_CONFIG: SecurityConfig = {
     'video/x-msvideo'
   ],
   corsStrategy: 'strict',
-  enableLogging: true
+  enableLogging: true,
+  allowIndexedDBUrls: true // Enable IndexedDB URL support for local-first storage
 };
 
 /**
@@ -235,19 +260,30 @@ class VideoSecurityManager {
     return VideoSecurityManager.instance;
   }
 
-  /**
-   * Validate URL against security policies
-   * Enterprise-grade URL validation with threat protection
-   */
-  validateVideoUrl(url: string): { isValid: boolean; reason?: string; corsStrategy: 'anonymous' | 'none' | 'reject' } {
-    try {
-      const urlObj = new URL(url);
-      
-      // Security checks
-      if (urlObj.protocol !== 'https:' && urlObj.protocol !== 'http:' && urlObj.protocol !== 'blob:' && urlObj.protocol !== 'data:') {
-        this.logSecurityEvent('Invalid protocol detected', url, 'error');
-        return { isValid: false, reason: 'Invalid protocol', corsStrategy: 'reject' };
-      }
+     /**
+    * Validate URL against security policies
+    * Enterprise-grade URL validation with threat protection
+    */
+   validateVideoUrl(url: string): { isValid: boolean; reason?: string; corsStrategy: 'anonymous' | 'none' | 'reject'; needsResolution?: boolean } {
+     try {
+       // Handle IndexedDB URLs specially for local-first storage
+       if (url.startsWith('indexeddb://')) {
+         if (this.config.allowIndexedDBUrls) {
+           this.logSecurityEvent('IndexedDB URL detected - needs resolution', url, 'info');
+           return { isValid: true, corsStrategy: 'none', needsResolution: true };
+         } else {
+           this.logSecurityEvent('IndexedDB URLs disabled by policy', url, 'warning');
+           return { isValid: false, reason: 'IndexedDB URLs not allowed', corsStrategy: 'reject' };
+         }
+       }
+
+       const urlObj = new URL(url);
+       
+       // Security checks for standard URLs
+       if (urlObj.protocol !== 'https:' && urlObj.protocol !== 'http:' && urlObj.protocol !== 'blob:' && urlObj.protocol !== 'data:') {
+         this.logSecurityEvent('Invalid protocol detected', url, 'error');
+         return { isValid: false, reason: 'Invalid protocol', corsStrategy: 'reject' };
+       }
 
       // Check for suspicious patterns (potential attacks)
       const suspiciousPatterns = [
@@ -265,15 +301,15 @@ class VideoSecurityManager {
         }
       }
 
-      // Local and blob URLs are always safe
-      if (urlObj.protocol === 'blob:' || urlObj.protocol === 'data:') {
-        return { isValid: true, corsStrategy: 'none' };
-      }
+             // Local and blob URLs are always safe
+       if (urlObj.protocol === 'blob:' || urlObj.protocol === 'data:') {
+         return { isValid: true, corsStrategy: 'none', needsResolution: false };
+       }
 
-      // Same origin check
-      if (this.isSameOrigin(url)) {
-        return { isValid: true, corsStrategy: 'none' };
-      }
+       // Same origin check
+       if (this.isSameOrigin(url)) {
+         return { isValid: true, corsStrategy: 'none', needsResolution: false };
+       }
 
       // Check against allowed domains
       const isAllowedDomain = this.config.allowedDomains.some(domain => {
@@ -297,24 +333,24 @@ class VideoSecurityManager {
         return urlObj.origin === origin;
       });
 
-      if (isAllowedOrigin) {
-        return { isValid: true, corsStrategy: 'anonymous' };
-      }
+             if (isAllowedOrigin) {
+         return { isValid: true, corsStrategy: 'anonymous', needsResolution: false };
+       }
 
-      // Default behavior based on strategy
-      switch (this.config.corsStrategy) {
-        case 'strict':
-          return { isValid: false, reason: 'Origin not allowed', corsStrategy: 'reject' };
-        case 'permissive':
-          this.logSecurityEvent('Permissive mode: allowing external URL', url, 'warning');
-          return { isValid: true, corsStrategy: 'anonymous' };
-        case 'custom':
-          // Allow with anonymous CORS but log for monitoring
-          this.logSecurityEvent('Custom mode: allowing with anonymous CORS', url, 'info');
-          return { isValid: true, corsStrategy: 'anonymous' };
-        default:
-          return { isValid: false, reason: 'Unknown strategy', corsStrategy: 'reject' };
-      }
+       // Default behavior based on strategy
+       switch (this.config.corsStrategy) {
+         case 'strict':
+           return { isValid: false, reason: 'Origin not allowed', corsStrategy: 'reject' };
+         case 'permissive':
+           this.logSecurityEvent('Permissive mode: allowing external URL', url, 'warning');
+           return { isValid: true, corsStrategy: 'anonymous', needsResolution: false };
+         case 'custom':
+           // Allow with anonymous CORS but log for monitoring
+           this.logSecurityEvent('Custom mode: allowing with anonymous CORS', url, 'info');
+           return { isValid: true, corsStrategy: 'anonymous', needsResolution: false };
+         default:
+           return { isValid: false, reason: 'Unknown strategy', corsStrategy: 'reject' };
+       }
 
     } catch (error) {
       this.logSecurityEvent('URL parsing failed', url, 'error');
@@ -380,7 +416,7 @@ class VideoSecurityManager {
 
 /**
  * Extract multiple frames from video with enterprise-grade security
- * Production-ready implementation with comprehensive security controls
+ * Production-ready implementation with comprehensive security controls and URL resolution
  */
 export const extractVideoFrames = async (
   url: string,
@@ -389,18 +425,31 @@ export const extractVideoFrames = async (
   const finalConfig = { ...DEFAULT_FILMSTRIP_CONFIG, ...config };
   const securityManager = VideoSecurityManager.getInstance();
   
-  return new Promise((resolve, reject) => {
-    // Enterprise-grade URL validation
-    const validation = securityManager.validateVideoUrl(url);
-    if (!validation.isValid) {
-      reject(new Error(`Security validation failed: ${validation.reason}`));
-      return;
-    }
+  // Enterprise-grade URL validation
+  const validation = securityManager.validateVideoUrl(url);
+  if (!validation.isValid) {
+    throw new Error(`Security validation failed: ${validation.reason}`);
+  }
 
-    if (validation.corsStrategy === 'reject') {
-      reject(new Error('URL rejected by security policy'));
-      return;
+  if (validation.corsStrategy === 'reject') {
+    throw new Error('URL rejected by security policy');
+  }
+
+  // Resolve IndexedDB URLs to blob URLs if needed
+  let resolvedUrl = url;
+  if (validation.needsResolution) {
+    try {
+      // Import MediaUrlResolver dynamically to avoid circular dependencies
+      const { MediaUrlResolver } = await import('@/lib/video/media-url-resolver');
+      resolvedUrl = await MediaUrlResolver.resolveUrl(url);
+      console.log(`Resolved IndexedDB URL: ${url} -> ${resolvedUrl}`);
+    } catch (error) {
+      console.error('Failed to resolve IndexedDB URL:', error);
+      throw new Error(`URL resolution failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+  }
+  
+  return new Promise((resolve, reject) => {
     
     const video = document.createElement("video");
     const canvas = document.createElement("canvas");
@@ -588,9 +637,9 @@ export const extractVideoFrames = async (
       reject(new Error(errorType));
     });
     
-    // Start loading with comprehensive error handling
+    // Start loading with comprehensive error handling using resolved URL
     try {
-      video.src = url;
+      video.src = resolvedUrl;
       video.load();
     } catch (loadError) {
       reject(new Error(`Failed to start video loading: ${loadError}`));
