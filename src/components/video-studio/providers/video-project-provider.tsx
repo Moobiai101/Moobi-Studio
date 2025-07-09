@@ -29,7 +29,7 @@ export function VideoProjectProvider({
     const initializeProject = async () => {
       setIsLoading(true);
       
-      try {        
+      try {
         let project: VideoEditorProject;
         
         if (projectId) {

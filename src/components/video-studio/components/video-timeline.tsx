@@ -644,8 +644,14 @@ export function VideoTimeline() {
   // URL resolution cache for audio engine
   const [resolvedUrls, setResolvedUrls] = useState<Map<string, string>>(new Map());
   
+  // Debug mediaAssets immediately
+  console.log('🔍 VideoTimeline render - mediaAssets:', mediaAssets.length, mediaAssets.map(a => ({ id: a.id, localId: a.local_asset_id })));
+  
   // Pre-resolve all IndexedDB URLs for audio playback
   useEffect(() => {
+    console.log('🔍 URL resolution effect triggered. MediaAssets length:', mediaAssets.length);
+    console.log('🔍 MediaAssets:', mediaAssets.map(a => ({ id: a.id, hasLocalId: !!a.local_asset_id, localId: a.local_asset_id })));
+    
     const resolveAllUrls = async () => {
       console.log('🔄 Starting URL resolution for media assets:', mediaAssets.length);
       
@@ -668,29 +674,40 @@ export function VideoTimeline() {
       
       console.log('🔄 Resolving', urlsToResolve.length, 'IndexedDB URLs...');
       
-      // Resolve all URLs in parallel
-      const { MediaUrlResolver } = await import('@/lib/video/media-url-resolver');
-      const newResolvedUrls = new Map<string, string>();
-      
-      await Promise.all(
-        urlsToResolve.map(async ({ id, url }) => {
+      try {
+        // Resolve all URLs in parallel
+        const { MediaUrlResolver } = await import('@/lib/video/media-url-resolver');
+        const newResolvedUrls = new Map<string, string>();
+        
+        const resolutionPromises = urlsToResolve.map(async ({ id, url }) => {
           try {
+            console.log('🔄 Resolving URL for asset', id, ':', url);
             const resolvedUrl = await MediaUrlResolver.resolveUrl(url);
             newResolvedUrls.set(id, resolvedUrl);
             console.log('✅ Pre-resolved URL for asset', id, ':', url, '->', resolvedUrl);
+            return { id, success: true, resolvedUrl };
           } catch (error) {
             console.error('❌ Failed to pre-resolve URL for asset', id, ':', error);
             // Store original URL as fallback
             newResolvedUrls.set(id, url);
+            return { id, success: false, error };
           }
-        })
-      );
-      
-      console.log('🎵 URL resolution complete. Resolved URLs:', newResolvedUrls.size);
-      setResolvedUrls(newResolvedUrls);
+        });
+        
+        const results = await Promise.all(resolutionPromises);
+        console.log('🎵 URL resolution results:', results);
+        console.log('🎵 URL resolution complete. Resolved URLs:', newResolvedUrls.size);
+        setResolvedUrls(newResolvedUrls);
+      } catch (importError) {
+        console.error('❌ Failed to import MediaUrlResolver:', importError);
+        setResolvedUrls(new Map());
+      }
     };
     
-    resolveAllUrls();
+    resolveAllUrls().catch(error => {
+      console.error('❌ URL resolution failed:', error);
+      setResolvedUrls(new Map());
+    });
   }, [mediaAssets]);
   
   // Enhanced getAllClips that includes resolved URLs

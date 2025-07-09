@@ -164,7 +164,7 @@ export class MediaAssetService {
 
       // Add local availability info (simplified)
       const assetsWithAvailability = assets.map((asset) => ({
-        ...asset,
+            ...asset,
         _localAvailable: asset.is_local_available || !!asset.local_asset_id,
         _localPath: asset.local_storage_key || asset.local_asset_id
       }));

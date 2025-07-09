@@ -936,15 +936,15 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
 
       updateDeviceActivity: async () => {
         // Device activity tracking removed in simplified user-only approach
-        set({ deviceSyncStatus: 'synced' });
+          set({ deviceSyncStatus: 'synced' });
       },
 
       checkSyncStatus: async () => {
         // Sync status checking simplified in user-only approach
-        set({
+          set({
           availableDevices: 1, // Single user, single device
           deviceSyncStatus: 'synced'
-        });
+          });
       },
 
       resolveConflicts: async () => {
