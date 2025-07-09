@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
 
 // Add CSS for timeline animations
 const timelineStyles = `
@@ -96,41 +96,47 @@ function VideoClip({
   const filmstripsManager = useVideoFilmstripsContext();
   const [filmstripLoaded, setFilmstripLoaded] = useState(false);
   
-  // Calculate optimalFrameCount based on clipWidth (visual width on timeline)
-  // This determines how many frames we visually want to see for this clip.
-  const optimalFrameCount = Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
+  // Memoize optimalFrameCount to prevent infinite re-renders
+  const optimalFrameCount = useMemo(() => {
+    return Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
+  }, [clipWidth]);
 
-  // Request filmstrip for video clips using professional editor standards
+  // Memoize filmstrip config to prevent unnecessary re-requests
+  const filmstripConfig = useMemo(() => ({
+    frameWidth: 96,  // 16:9 aspect ratio at 64px height
+    frameHeight: 64, // Fixed height like Premiere Pro
+    frameCount: optimalFrameCount,
+    quality: 0.95,    // High quality for sharp thumbnails
+    layout: 'horizontal' as const,
+    sourceStartTime: clip.trim_start, // Start time of the segment within the asset
+    sourceDuration: clip.trim_end - clip.trim_start // Duration of the segment from the asset
+  }), [optimalFrameCount, clip.trim_start, clip.trim_end]);
+
+  // Request filmstrip for video clips using professional editor standards with debouncing
   useEffect(() => {
-    if (clip.asset.type === 'video' && clip.asset.url && clipWidth > 20) {
+    if (clip.asset.type !== 'video' || !clip.asset.url || clipWidth <= 20) {
+      return;
+    }
+
+    // Debounce filmstrip requests to prevent excessive calls
+    const timeoutId = setTimeout(() => {
       const clipDuration = clip.end_time - clip.start_time;
-      
-      // Professional approach: Fixed height, high quality, optimized frame count
-      const PROFESSIONAL_FRAME_HEIGHT = 64; // Fixed height like Premiere Pro
-      const PROFESSIONAL_FRAME_WIDTH = 96;  // 16:9 aspect ratio at 64px height
-      const PROFESSIONAL_QUALITY = 0.95;    // High quality for sharp thumbnails
       
       // Request filmstrip with professional settings
       filmstripsManager.requestFilmstrip(
         clip.id,
         clip.asset.url,
-        clip.end_time - clip.start_time, // This is the display duration on the timeline
+        clipDuration, // This is the display duration on the timeline
         clipWidth,
         {
           priority: isSelected ? 'high' : 'normal',
-          config: {
-            frameWidth: PROFESSIONAL_FRAME_WIDTH,
-            frameHeight: PROFESSIONAL_FRAME_HEIGHT,
-            frameCount: optimalFrameCount,
-            quality: PROFESSIONAL_QUALITY,
-            layout: 'horizontal',
-            sourceStartTime: clip.trim_start, // Start time of the segment within the asset
-            sourceDuration: clip.trim_end - clip.trim_start // Duration of the segment from the asset
-          }
+          config: filmstripConfig
         }
       );
-    }
-  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, clip.trim_start, clip.trim_end, filmstripsManager, optimalFrameCount]);
+    }, 100); // 100ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, filmstripsManager, filmstripConfig]);
   
   // Get filmstrip state
   const filmstrip = filmstripsManager.getFilmstrip(clip.id);
@@ -286,40 +292,47 @@ function OverlayClip({
   const filmstripsManager = useVideoFilmstripsContext();
   const [filmstripLoaded, setFilmstripLoaded] = useState(false);
   
-  // Calculate optimalFrameCount based on clipWidth (same as VideoClip)
-  const optimalFrameCount = Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
+  // Memoize optimalFrameCount to prevent infinite re-renders
+  const optimalFrameCount = useMemo(() => {
+    return Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
+  }, [clipWidth]);
 
-  // Request filmstrip for video overlays using professional editor standards
+  // Memoize filmstrip config to prevent unnecessary re-requests
+  const filmstripConfig = useMemo(() => ({
+    frameWidth: 96,  // 16:9 aspect ratio at 64px height
+    frameHeight: 64, // Fixed height like Premiere Pro
+    frameCount: optimalFrameCount,
+    quality: 0.95,    // High quality for sharp thumbnails
+    layout: 'horizontal' as const,
+    sourceStartTime: clip.trim_start, // Start time of the segment within the asset
+    sourceDuration: clip.trim_end - clip.trim_start // Duration of the segment from the asset
+  }), [optimalFrameCount, clip.trim_start, clip.trim_end]);
+
+  // Request filmstrip for video overlays using professional editor standards with debouncing
   useEffect(() => {
-    if (clip.asset.type === 'video' && clip.asset.url && clipWidth > 20) {
+    if (clip.asset.type !== 'video' || !clip.asset.url || clipWidth <= 20) {
+      return;
+    }
+
+    // Debounce filmstrip requests to prevent excessive calls
+    const timeoutId = setTimeout(() => {
       const clipDuration = clip.end_time - clip.start_time;
-      
-      // Professional approach: Fixed height, high quality, optimized frame count
-      const PROFESSIONAL_FRAME_HEIGHT = 64; // Fixed height like Premiere Pro
-      const PROFESSIONAL_FRAME_WIDTH = 96;  // 16:9 aspect ratio at 64px height
-      const PROFESSIONAL_QUALITY = 0.95;    // High quality for sharp thumbnails
       
       // Request filmstrip with professional settings
       filmstripsManager.requestFilmstrip(
         clip.id,
         clip.asset.url,
-        clip.end_time - clip.start_time, // This is the display duration on the timeline
+        clipDuration, // This is the display duration on the timeline
         clipWidth,
         {
           priority: isSelected ? 'high' : 'normal',
-          config: {
-            frameWidth: PROFESSIONAL_FRAME_WIDTH,
-            frameHeight: PROFESSIONAL_FRAME_HEIGHT,
-            frameCount: optimalFrameCount,
-            quality: PROFESSIONAL_QUALITY,
-            layout: 'horizontal',
-            sourceStartTime: clip.trim_start, // Start time of the segment within the asset
-            sourceDuration: clip.trim_end - clip.trim_start // Duration of the segment from the asset
-          }
+          config: filmstripConfig
         }
       );
-    }
-  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, clip.trim_start, clip.trim_end, filmstripsManager, optimalFrameCount]);
+    }, 100); // 100ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, filmstripsManager, filmstripConfig]);
   
   // Get filmstrip state
   const filmstrip = filmstripsManager.getFilmstrip(clip.id);
