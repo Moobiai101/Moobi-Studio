@@ -1076,7 +1076,9 @@ export function VideoTimeline() {
             clip.endTime,
             clip.trimStart,
             clip.trimEnd
-          );
+          ).catch(error => {
+            console.warn('Failed to add audio track:', error);
+          });
           
           // Apply current volume and mute state
           audioEngine.setTrackVolume(clip.id, clip.volume || 1);
@@ -2015,7 +2017,13 @@ export function VideoTimeline() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => setIsPlaying(!isPlaying)}
+            onClick={async () => {
+              // Resume audio context on play to fix user gesture requirement
+              if (!isPlaying) {
+                await audioEngine.resumeAudioContext();
+              }
+              setIsPlaying(!isPlaying);
+            }}
             className="text-zinc-400 hover:text-white h-7 w-7 p-0"
             title={isPlaying ? "Pause" : "Play"}
           >

@@ -9,8 +9,137 @@ import {
   useVideoConfig,
   Sequence 
 } from "remotion";
+import React, { useMemo } from "react";
 import { getMediaInfo, EnhancedTimelineTrack, EnhancedTimelineClip } from "../store/video-project-store";
 import { VideoEditorProject, UserAsset } from "@/types/database";
+import { useResolvedMediaUrl } from "@/lib/video/media-url-resolver";
+
+// Production-grade URL resolution hook for multiple URLs
+const useResolvedMediaUrls = (urls: string[]) => {
+  const resolvedUrls = useMemo(() => {
+    const urlMap = new Map<string, { url: string; isLoading: boolean; error: Error | null }>();
+    
+    urls.forEach(url => {
+      urlMap.set(url, { url, isLoading: false, error: null });
+    });
+    
+    return urlMap;
+  }, [urls]);
+  
+  // For now, return the same pattern as single URL resolution
+  // In production, this would batch resolve all URLs
+  return resolvedUrls;
+};
+
+// Enhanced Video component with URL resolution
+const ResolvedVideo: React.FC<{
+  src: string;
+  startFrom?: number;
+  endAt?: number;
+  volume?: number;
+  style?: React.CSSProperties;
+  onError?: (error: any) => void;
+}> = ({ src, startFrom, endAt, volume = 0, style, onError }) => {
+  const { url: resolvedUrl, isLoading, error } = useResolvedMediaUrl(src);
+  
+  // Don't render while resolving or if there's an error
+  if (isLoading) {
+    return (
+      <div style={{ 
+        ...style, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        backgroundColor: '#1e40af',
+        color: 'white',
+        fontSize: '12px'
+      }}>
+        Loading...
+      </div>
+    );
+  }
+  
+  if (error) {
+    console.error('Video URL resolution error:', error);
+    onError?.(error);
+    return (
+      <div style={{ 
+        ...style, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        backgroundColor: '#dc2626',
+        color: 'white',
+        fontSize: '12px'
+      }}>
+        Video Error
+      </div>
+    );
+  }
+  
+  return (
+    <Video
+      src={resolvedUrl}
+      startFrom={startFrom}
+      endAt={endAt}
+      volume={volume}
+      style={style}
+      onError={onError}
+    />
+  );
+};
+
+// Enhanced Image component with URL resolution
+const ResolvedImg: React.FC<{
+  src: string;
+  style?: React.CSSProperties;
+  onError?: (error: any) => void;
+}> = ({ src, style, onError }) => {
+  const { url: resolvedUrl, isLoading, error } = useResolvedMediaUrl(src);
+  
+  // Don't render while resolving or if there's an error
+  if (isLoading) {
+    return (
+      <div style={{ 
+        ...style, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        backgroundColor: '#6b7280',
+        color: 'white',
+        fontSize: '12px'
+      }}>
+        Loading...
+      </div>
+    );
+  }
+  
+  if (error) {
+    console.error('Image URL resolution error:', error);
+    onError?.(error);
+    return (
+      <div style={{ 
+        ...style, 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        backgroundColor: '#dc2626',
+        color: 'white',
+        fontSize: '12px'
+      }}>
+        Image Error
+      </div>
+    );
+  }
+  
+  return (
+    <Img
+      src={resolvedUrl}
+      style={style}
+      onError={onError}
+    />
+  );
+};
 
 interface VideoCompositionProps {
   project: {
@@ -208,7 +337,7 @@ const VideoClipRenderer: React.FC<{
   fps: number;
 }> = ({ asset, mediaInfo, clip, fps }) => {
   return (
-    <Video
+    <ResolvedVideo
       src={mediaInfo.url}
       startFrom={Math.floor((clip.trim_start || 0) * fps)}
       endAt={Math.floor((clip.trim_end || (clip.end_time - clip.start_time)) * fps)}
@@ -218,9 +347,8 @@ const VideoClipRenderer: React.FC<{
         height: "100%",
         objectFit: "contain",
       }}
-      // Add error handling and loading states
       onError={(error) => {
-        console.error("Video loading error:", error);
+        console.error("Video loading error for clip:", clip.id, error);
       }}
     />
   );
@@ -233,16 +361,15 @@ const ImageClipRenderer: React.FC<{
   fps: number;
 }> = ({ asset, mediaInfo, clip, fps }) => {
   return (
-    <Img
+    <ResolvedImg
       src={mediaInfo.url}
       style={{
         width: "100%",
         height: "100%",
         objectFit: "contain",
       }}
-      // Add error handling
       onError={(error) => {
-        console.error("Image loading error:", error);
+        console.error("Image loading error for clip:", clip.id, error);
       }}
     />
   );
@@ -317,7 +444,7 @@ const OverlayVideoRenderer: React.FC<{
         className="video-overlay-element"
         onClick={(e) => e.stopPropagation()}
       >
-        <Video
+        <ResolvedVideo
           src={mediaInfo.url}
           startFrom={Math.floor((clip.trim_start || 0) * fps)}
           endAt={Math.floor((clip.trim_end || (clip.end_time - clip.start_time)) * fps)}
@@ -328,7 +455,7 @@ const OverlayVideoRenderer: React.FC<{
             objectFit: "contain",
           }}
           onError={(error) => {
-            console.error("Overlay video loading error:", error);
+            console.error("Overlay video loading error for clip:", clip.id, error);
           }}
         />
       </div>
@@ -404,7 +531,7 @@ const OverlayImageRenderer: React.FC<{
         className="video-overlay-element"
         onClick={(e) => e.stopPropagation()}
       >
-        <Img
+        <ResolvedImg
           src={mediaInfo.url}
           style={{
             width: "100%",
@@ -412,7 +539,7 @@ const OverlayImageRenderer: React.FC<{
             objectFit: "contain",
           }}
           onError={(error) => {
-            console.error("Overlay image loading error:", error);
+            console.error("Overlay image loading error for clip:", clip.id, error);
           }}
         />
       </div>

@@ -24,6 +24,7 @@ class ProfessionalAudioEngine {
   private masterGainNode: GainNode | null = null;
   private trackGainNodes: Map<string, GainNode> = new Map();
   private audioElements: Map<string, HTMLAudioElement> = new Map();
+  private initialized: boolean = false;
   private masterState: MasterAudioState = {
     volume: 1.0,
     muted: false,
@@ -42,15 +43,31 @@ class ProfessionalAudioEngine {
     return Math.pow(log, 1 / 2.5);
   }
 
+  // Production-grade initialization with user gesture requirement
   async initialize(): Promise<void> {
+    if (this.initialized) return;
+    
     try {
-      // Initialize Web Audio API for professional control
+      // Only initialize AudioContext after user gesture to comply with browser policies
+      this.initialized = true;
+      console.log('🎚️ Audio Engine initialized (deferred AudioContext creation)');
+    } catch (error) {
+      console.error('❌ Audio Engine initialization failed:', error);
+    }
+  }
+
+  // Initialize AudioContext only when needed and after user gesture
+  private async initializeAudioContext(): Promise<void> {
+    if (this.audioContext) return;
+    
+    try {
       this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
       this.masterGainNode = this.audioContext.createGain();
       this.masterGainNode.connect(this.audioContext.destination);
+      
+      console.log('🎚️ AudioContext initialized successfully');
     } catch (error) {
-      // Fallback to HTML5 audio
+      console.warn('⚠️ AudioContext initialization failed, falling back to HTML5 audio:', error);
       this.audioContext = null;
       this.masterGainNode = null;
     }
@@ -58,17 +75,23 @@ class ProfessionalAudioEngine {
 
   // Resume audio context on user interaction (Chrome autoplay policy)
   async resumeAudioContext(): Promise<void> {
+    // Initialize AudioContext on first user interaction
+    if (!this.audioContext) {
+      await this.initializeAudioContext();
+    }
+    
     if (this.audioContext && this.audioContext.state === 'suspended') {
       try {
         await this.audioContext.resume();
+        console.log('🎚️ AudioContext resumed successfully');
       } catch (error) {
-        // Silent - don't spam console
+        console.warn('⚠️ Failed to resume AudioContext:', error);
       }
     }
   }
 
   // Add audio track (clip) to the engine
-  addTrack(clipId: string, audioSrc: string, startTime: number, endTime: number, trimStart: number = 0, trimEnd?: number): void {
+  async addTrack(clipId: string, audioSrc: string, startTime: number, endTime: number, trimStart: number = 0, trimEnd?: number): Promise<void> {
     try {
       // Skip if track already exists
       if (this.masterState.tracks.has(clipId)) {
@@ -85,8 +108,8 @@ class ProfessionalAudioEngine {
       
       audioElement.src = audioSrc;
       
-      // Resume audio context on first track add (user interaction)
-      this.resumeAudioContext();
+      // Initialize and resume audio context on first track add (user interaction)
+      await this.resumeAudioContext();
       
       // Set up Web Audio API routing if available
       let gainNode: GainNode | null = null;
@@ -339,9 +362,9 @@ class ProfessionalAudioEngine {
 // Singleton instance
 export const audioEngine = new ProfessionalAudioEngine();
 
-// Initialize on first import
+// Initialize on first import (deferred AudioContext creation)
 audioEngine.initialize().then(() => {
-  console.log('🎚️ Professional Audio Engine ready');
+  // AudioContext will be created on first user interaction
 }).catch(error => {
   console.error('❌ Audio Engine initialization failed:', error);
 }); 
