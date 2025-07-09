@@ -647,6 +647,8 @@ export function VideoTimeline() {
   // Pre-resolve all IndexedDB URLs for audio playback
   useEffect(() => {
     const resolveAllUrls = async () => {
+      console.log('🔄 Starting URL resolution for media assets:', mediaAssets.length);
+      
       const urlsToResolve: { id: string; url: string }[] = [];
       
       // Collect all IndexedDB URLs from media assets
@@ -654,10 +656,17 @@ export function VideoTimeline() {
         if (asset.local_asset_id) {
           const indexedDbUrl = `indexeddb://${asset.local_asset_id}`;
           urlsToResolve.push({ id: asset.id, url: indexedDbUrl });
+          console.log('📋 Found local asset to resolve:', { id: asset.id, url: indexedDbUrl });
         }
       });
       
-      if (urlsToResolve.length === 0) return;
+      if (urlsToResolve.length === 0) {
+        console.log('✅ No IndexedDB URLs to resolve');
+        setResolvedUrls(new Map());
+        return;
+      }
+      
+      console.log('🔄 Resolving', urlsToResolve.length, 'IndexedDB URLs...');
       
       // Resolve all URLs in parallel
       const { MediaUrlResolver } = await import('@/lib/video/media-url-resolver');
@@ -668,7 +677,7 @@ export function VideoTimeline() {
           try {
             const resolvedUrl = await MediaUrlResolver.resolveUrl(url);
             newResolvedUrls.set(id, resolvedUrl);
-            console.log('🎵 Pre-resolved URL for asset', id, ':', url, '->', resolvedUrl);
+            console.log('✅ Pre-resolved URL for asset', id, ':', url, '->', resolvedUrl);
           } catch (error) {
             console.error('❌ Failed to pre-resolve URL for asset', id, ':', error);
             // Store original URL as fallback
@@ -677,6 +686,7 @@ export function VideoTimeline() {
         })
       );
       
+      console.log('🎵 URL resolution complete. Resolved URLs:', newResolvedUrls.size);
       setResolvedUrls(newResolvedUrls);
     };
     
@@ -692,11 +702,25 @@ export function VideoTimeline() {
         const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
         if (asset) {
           const mediaInfo = getMediaInfo(asset);
+          const originalUrl = mediaInfo.url;
           
           // Use resolved URL if available, otherwise use original
           const resolvedUrl = resolvedUrls.get(asset.id);
           if (resolvedUrl) {
             mediaInfo.url = resolvedUrl;
+            console.log('🔄 URL replacement in getAllClips:', {
+              assetId: asset.id,
+              originalUrl,
+              resolvedUrl,
+              hasLocalAssetId: !!asset.local_asset_id
+            });
+          } else if (asset.local_asset_id) {
+            console.warn('⚠️ No resolved URL found for local asset:', {
+              assetId: asset.id,
+              localAssetId: asset.local_asset_id,
+              originalUrl,
+              availableResolvedUrls: Array.from(resolvedUrls.keys())
+            });
           }
           
           allClips.push({
@@ -1114,8 +1138,26 @@ export function VideoTimeline() {
   // - Multi-track mixing with master controls
   // - Automatic track management based on timeline clips
 
-  // Sync audio tracks with timeline clips
+  // Sync audio tracks with timeline clips - only when URLs are resolved
   useEffect(() => {
+    // Skip if no media assets or URLs not yet resolved
+    if (mediaAssets.length === 0) return;
+    
+    // Check if all local assets have been resolved
+    const localAssets = mediaAssets.filter(asset => asset.local_asset_id);
+    const allResolved = localAssets.length === 0 || localAssets.every(asset => resolvedUrls.has(asset.id));
+    
+    if (!allResolved) {
+      console.log('🔄 Waiting for URL resolution to complete...');
+      return;
+    }
+    
+    console.log('🎵 URL resolution complete, syncing audio tracks...', {
+      totalAssets: mediaAssets.length,
+      localAssets: localAssets.length,
+      resolvedUrls: resolvedUrls.size
+    });
+    
     const timelineClips = getAllClips();
     
     // Add new audio tracks for video and audio clips
@@ -1128,9 +1170,24 @@ export function VideoTimeline() {
           // URL is already resolved by getAllClips() using the resolvedUrls cache
           const audioUrl = clip.asset.url;
           
+          console.log('🎵 Processing audio clip:', {
+            clipId: clip.id,
+            assetId: clip.asset_id,
+            originalUrl: mediaAssets.find(a => a.id === clip.asset_id)?.local_asset_id ? 
+              `indexeddb://${mediaAssets.find(a => a.id === clip.asset_id)?.local_asset_id}` : 'N/A',
+            resolvedUrl: audioUrl,
+            isIndexedDB: audioUrl.startsWith('indexeddb://')
+          });
+          
           // Ensure we're not using IndexedDB URLs
           if (audioUrl.startsWith('indexeddb://')) {
             console.error('❌ IndexedDB URL still being used for audio:', audioUrl);
+            console.error('❌ Debug info:', {
+              assetId: clip.asset_id,
+              hasResolvedUrl: resolvedUrls.has(clip.asset_id),
+              resolvedUrl: resolvedUrls.get(clip.asset_id),
+              mediaAsset: mediaAssets.find(a => a.id === clip.asset_id)
+            });
             return; // Skip this track to prevent errors
           }
           
@@ -1154,7 +1211,7 @@ export function VideoTimeline() {
     });
     
     // Note: We don't remove tracks here to avoid complexity, they'll be cleaned up on unmount
-  }, [clips.length, JSON.stringify(clips.map(c => ({id: c.id, volume: c.volume, muted: c.muted}))), resolvedUrls]);
+  }, [clips.length, JSON.stringify(clips.map(c => ({id: c.id, volume: c.volume, muted: c.muted}))), resolvedUrls, mediaAssets]);
 
   // Note: Remotion video elements are muted at source level in video-preview.tsx and video-composition.tsx
 
