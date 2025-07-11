@@ -233,42 +233,6 @@ class IndexedDBManager {
     return URL.createObjectURL(blob);
   }
   
-  // ===== ASSET EXISTENCE CHECK =====
-  
-  async hasAsset(localAssetId: string): Promise<boolean> {
-    await this.initialize();
-    if (!this.db) {
-      console.warn('❌ Database not initialized for hasAsset check');
-      return false;
-    }
-    
-    const assetId = localAssetId.replace('local_', '');
-    
-    try {
-      // Check if metadata exists
-      const metadata = await this.db.get('asset_metadata', assetId);
-      if (!metadata) {
-        return false;
-      }
-      
-      // Verify that at least the first chunk exists
-      const firstChunkId = `${assetId}_0`;
-      const firstChunk = await this.db.get('media_chunks', firstChunkId);
-      
-      const exists = !!firstChunk;
-      if (!exists) {
-        console.warn(`⚠️ Asset metadata exists but chunks missing for: ${assetId}`);
-        // Clean up orphaned metadata
-        await this.db.delete('asset_metadata', assetId);
-      }
-      
-      return exists;
-    } catch (error) {
-      console.error(`❌ Error checking asset existence for ${assetId}:`, error);
-      return false;
-    }
-  }
-  
   // ===== CACHE MANAGEMENT =====
   
   async storeThumbnail(assetId: string, thumbnail: Blob): Promise<void> {

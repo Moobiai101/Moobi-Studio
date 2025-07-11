@@ -50,32 +50,24 @@ export function VideoPreview() {
     return Math.max(maxEndTime, 10); // Minimum 10 seconds
   }, [tracks]);
 
-  // Memoize overlay clips to prevent infinite re-renders
-  const overlayClips = useMemo(() => {
-    const overlayTracks = tracks.filter((track: any) => track.track_type === 'overlay');
-    const clips: any[] = [];
-    
-    overlayTracks.forEach((track: any) => {
-      track.clips.forEach((clip: any) => {
-        const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
-        if (asset) {
-          clips.push({
-            ...clip,
-            asset,
-            track
-          });
-        }
-      });
-    });
-    
-    return clips;
-  }, [tracks, mediaAssets]); // Only depend on tracks and mediaAssets
-
   const projectDuration = calculateProjectDuration();
   const resolution = getResolution();
   const fps = getFPS();
   const durationInFrames = Math.max(1, Math.floor(projectDuration * fps));
   const hasContent = mediaAssets.length > 0 && tracks.some((track: any) => track.clips.length > 0);
+
+  // Get overlay clips for transform controls
+  const overlayClips = useMemo(() => 
+    tracks
+      .filter((track: any) => track.track_type === 'overlay')
+      .flatMap((track: any) => track.clips)
+      .map((clip: any) => {
+        // Include the asset data with each clip for the transform controls
+        const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
+        return { ...clip, asset };
+      }),
+    [tracks, mediaAssets]
+  );
 
   // Transform update handler for overlays
   // DATABASE STORAGE NEEDED: This should update the clip transform data in database

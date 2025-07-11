@@ -105,7 +105,7 @@ export function MediaPanel() {
 
   const MediaItem = ({ asset }: { asset: any }) => {
     const mediaInfo = getMediaInfo(asset);
-    const { url: resolvedUrl, isLoading: isLoadingUrl, error: urlError } = useResolvedMediaUrl(mediaInfo.url);
+    const { url: resolvedUrl, isLoading: isLoadingUrl } = useResolvedMediaUrl(mediaInfo.url);
     
     const getIcon = () => {
       switch (mediaInfo.type) {
@@ -125,11 +125,6 @@ export function MediaPanel() {
       }
     };
 
-    // Handle URL resolution error
-    if (urlError) {
-      console.warn(`⚠️ Media item URL resolution failed for ${asset.id}:`, urlError.message);
-    }
-
     if (viewMode === "grid") {
       return (
         <div
@@ -142,25 +137,17 @@ export function MediaPanel() {
             {mediaInfo.type === "image" ? (
               isLoadingUrl ? (
                 <div className="w-4 h-4 border-2 border-zinc-600 border-t-transparent rounded-full animate-spin" />
-              ) : urlError ? (
-                <div className="flex flex-col items-center gap-1 text-red-400">
-                  <ImageIcon className="w-4 h-4" />
-                  <span className="text-xs">Error</span>
-                </div>
               ) : (
-                <img 
+              <img 
                   src={resolvedUrl} 
-                  alt={mediaInfo.name}
-                  className="w-full h-full object-cover"
-                  onError={() => console.warn(`⚠️ Image load failed: ${asset.id}`)}
-                />
+                alt={mediaInfo.name}
+                className="w-full h-full object-cover"
+              />
               )
             ) : (
-              <div className={cn("flex flex-col items-center gap-1", urlError ? "text-red-400" : getTypeColor())}>
+              <div className={cn("flex flex-col items-center gap-1", getTypeColor())}>
                 {getIcon()}
-                <span className="text-xs opacity-75">
-                  {urlError ? "ERROR" : mediaInfo.type.toUpperCase()}
-                </span>
+                <span className="text-xs opacity-75">{mediaInfo.type.toUpperCase()}</span>
               </div>
             )}
           </div>
@@ -172,16 +159,10 @@ export function MediaPanel() {
             </div>
           )}
 
-          {/* Type indicator for images or error indicator */}
-          {mediaInfo.type === "image" && !urlError && (
+          {/* Type indicator for images */}
+          {mediaInfo.type === "image" && (
             <div className="absolute top-3 right-3 bg-purple-600/80 px-1 py-0.5 rounded text-xs text-white">
               IMG
-            </div>
-          )}
-          
-          {urlError && (
-            <div className="absolute top-3 right-3 bg-red-600/80 px-1 py-0.5 rounded text-xs text-white">
-              ERR
             </div>
           )}
 
@@ -189,10 +170,8 @@ export function MediaPanel() {
           <div className="space-y-1">
             <p className="text-xs text-white truncate font-medium">{mediaInfo.name}</p>
             <div className="flex items-center justify-between">
-              <p className={cn("text-xs capitalize", urlError ? "text-red-400" : getTypeColor())}>
-                {urlError ? "Error" : mediaInfo.type}
-              </p>
-              {mediaInfo.type === "image" && !urlError && (
+              <p className={cn("text-xs capitalize", getTypeColor())}>{mediaInfo.type}</p>
+              {mediaInfo.type === "image" && (
                 <p className="text-xs text-zinc-400">{formatTime(mediaInfo.duration || 5)}</p>
               )}
             </div>
@@ -206,16 +185,14 @@ export function MediaPanel() {
           onDragStart={(e) => handleDragStart(e, asset)}
           className="flex items-center gap-3 p-2 rounded-lg hover:bg-zinc-800 cursor-pointer transition-colors"
         >
-          <div className={cn("shrink-0", urlError ? "text-red-400" : getTypeColor())}>
+          <div className={cn("shrink-0", getTypeColor())}>
             {getIcon()}
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-sm text-white truncate font-medium">{mediaInfo.name}</p>
             <div className="flex items-center gap-2 text-xs text-zinc-400">
-              <span className={cn("capitalize", urlError ? "text-red-400" : "text-zinc-400")}>
-                {urlError ? "Error" : mediaInfo.type}
-              </span>
-              {(mediaInfo.duration || mediaInfo.type === "image") && !urlError && (
+              <span className="capitalize">{mediaInfo.type}</span>
+              {(mediaInfo.duration || mediaInfo.type === "image") && (
                 <>
                   <span>•</span>
                   <span>{formatTime(mediaInfo.duration || 5)}</span>

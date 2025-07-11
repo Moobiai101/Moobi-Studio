@@ -27,38 +27,45 @@ export function VideoProjectProvider({
   // Initialize store and load project
   useEffect(() => {
     const initializeProject = async () => {
+      setIsLoading(true);
+      
       try {
-        // Handle undefined projectId case
-        const resolvedProjectId = projectId || 'default-project';
+        let project: VideoEditorProject;
         
-        // Create store for this project
-        storeRef.current = createVideoProjectStore({ projectId: resolvedProjectId });
+        if (projectId) {
+          // Load specific project
+          project = await VideoProjectService.getProject(projectId);
+        } else {
+          // Create or load a default project
+          const recentProjects = await VideoProjectService.getUserProjects();
+          if (recentProjects.length > 0) {
+            project = recentProjects[0]; // Load most recent project
+          } else {
+            project = await VideoProjectService.createProject("My First Video");
+          }
+        }
         
-        // Initialize the project
-        await storeRef.current.getState().initializeProject(resolvedProjectId);
+        setCurrentProject(project);
         
-        // Load media assets
+        // Initialize the store with the project
+        if (!storeRef.current) {
+          storeRef.current = createVideoProjectStore({ 
+            projectId: project.id
+          });
+        }
+        
+        // Load the project data into the store
+        await storeRef.current.getState().loadProject(project.id);
+        
+        // Load media assets for the video studio
         const mediaAssets = await MediaAssetService.getUserAssets();
         
         // Add media assets to the store
         mediaAssets.forEach(asset => {
           storeRef.current?.getState().addMediaAsset(asset);
         });
-
-        // Validate local asset synchronization
-        console.log('🔍 Validating local asset synchronization...');
-        const validation = await MediaAssetService.validateAndSyncLocalAssets();
         
-        if (validation.missing > 0) {
-          console.warn(`⚠️ Found ${validation.missing} missing assets in IndexedDB`);
-          console.warn('These assets exist in the database but not in local storage. They may need to be re-uploaded.');
-        }
-        
-        if (validation.valid > 0) {
-          console.log(`✅ ${validation.valid} assets are properly synchronized`);
-        }
-        
-        setCurrentProject(storeRef.current.getState().project);
+        setShowProjectList(false);
       } catch (error) {
         console.error("Failed to initialize project:", error);
         // Fallback to default project
@@ -84,25 +91,18 @@ export function VideoProjectProvider({
         // Load the project data
         await storeRef.current.getState().loadProject(project.id);
         
-        // Get current media assets to avoid duplicates
-        const currentAssets = storeRef.current.getState().mediaAssets;
-        const currentAssetIds = new Set(currentAssets.map(asset => asset.id));
-        
-        // Load media assets for the video studio
-        const allMediaAssets = await MediaAssetService.getUserAssets();
-        
-        // Only add new assets that aren't already in the store
-        const newAssets = allMediaAssets.filter(asset => !currentAssetIds.has(asset.id));
-        
-        console.log(`🔄 Project load: ${currentAssets.length} existing, ${newAssets.length} new assets to add`);
-        
-        // Add only new media assets to prevent duplicates
-        newAssets.forEach(asset => {
-          storeRef.current?.getState().addMediaAsset(asset);
+        // Clear existing media assets and reload from database
+        storeRef.current.setState({ 
+          mediaAssets: []
         });
         
-        // If we need to replace all assets (e.g., after significant changes), use refreshMediaAssets instead
-        // await storeRef.current.getState().refreshMediaAssets();
+        // Load media assets for the video studio
+        const mediaAssets = await MediaAssetService.getUserAssets();
+        
+        // Add media assets to the store
+        mediaAssets.forEach(asset => {
+          storeRef.current?.getState().addMediaAsset(asset);
+        });
       }
     } catch (error) {
       console.error("Failed to open project:", error);
