@@ -11,7 +11,7 @@ const urlCache = new Map<string, string>();
 export class MediaUrlResolver {
   /**
    * Resolve any media URL to a usable URL
-   * Handles both IndexedDB URLs and regular URLs
+   * Handles IndexedDB URLs for local-first storage
    */
   static async resolveUrl(url: string): Promise<string> {
     // Handle IndexedDB URLs
@@ -24,6 +24,14 @@ export class MediaUrlResolver {
       }
       
       try {
+        // First check if asset exists in IndexedDB
+        const exists = await indexedDBManager.hasAsset(localAssetId);
+        
+        if (!exists) {
+          console.error(`❌ Asset ${localAssetId} not found in IndexedDB - this asset needs to be re-uploaded`);
+          throw new Error(`Asset ${localAssetId} not available locally`);
+        }
+        
         // Get URL from IndexedDB
         const blobUrl = await MediaAssetService.getLocalAssetUrl(localAssetId);
         
@@ -41,8 +49,8 @@ export class MediaUrlResolver {
         
         return blobUrl;
       } catch (error) {
-        console.error('Failed to resolve IndexedDB URL:', error);
-        return url; // Return original URL as fallback
+        console.error('❌ Failed to resolve IndexedDB URL:', error);
+        throw error; // Don't return fallback - fail properly for local-first
       }
     }
     

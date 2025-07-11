@@ -233,6 +233,22 @@ class IndexedDBManager {
     return URL.createObjectURL(blob);
   }
   
+  // ===== ASSET EXISTENCE CHECK =====
+  
+  async hasAsset(localAssetId: string): Promise<boolean> {
+    await this.initialize();
+    if (!this.db) throw new Error('Database not initialized');
+    
+    const assetId = localAssetId.replace('local_', '');
+    
+    try {
+      const metadata = await this.db.get('asset_metadata', assetId);
+      return !!metadata;
+    } catch (error) {
+      return false;
+    }
+  }
+  
   // ===== CACHE MANAGEMENT =====
   
   async storeThumbnail(assetId: string, thumbnail: Blob): Promise<void> {

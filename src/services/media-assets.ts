@@ -187,8 +187,10 @@ export class MediaAssetService {
       return `indexeddb://${r2ObjectKey}`;
     }
     
-    // Legacy cloud assets (if any)
-    return `/storage/proxy/${r2ObjectKey}`;
+    // For cloud assets, use the worker proxy endpoint
+    // Get the worker URL from environment or use the default
+    const workerUrl = process.env.NEXT_PUBLIC_WORKER_URL || 'https://my-ai-worker.khansameersam96.workers.dev';
+    return `${workerUrl}/api/media?key=${encodeURIComponent(r2ObjectKey)}`;
   }
 
   /**
