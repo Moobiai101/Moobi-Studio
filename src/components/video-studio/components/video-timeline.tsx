@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useResolvedMediaUrl } from "@/lib/video/media-url-resolver";
+import { useResolvedMediaUrl, MediaUrlResolver } from "@/lib/video/media-url-resolver";
+import { indexedDBManager } from "@/lib/storage/indexed-db-manager";
 
 // Add CSS for timeline animations
 const timelineStyles = `
@@ -663,156 +664,128 @@ export function VideoTimeline() {
     });
   }, [mediaAssets]);
   
-  // Pre-resolve all IndexedDB URLs for audio playback - PRODUCTION GRADE APPROACH
-  useEffect(() => {
-    // Validate dependencies first (React best practice)
-    if (!mediaAssets || !Array.isArray(mediaAssets)) {
-      console.log('🔍 URL resolution effect: mediaAssets invalid', { mediaAssets });
-      return;
-    }
+  // Professional URL resolution with asset availability checking
+  const resolveAllUrls = async () => {
+    console.log('🔗 Starting URL resolution for audio engine...');
+    const newResolvedUrls = new Map<string, string>();
     
-    console.log('🔍 URL resolution effect triggered. MediaAssets length:', mediaAssets.length);
-    console.log('🔍 MediaAssets:', mediaAssets.map(a => ({ id: a.id, hasLocalId: !!a.local_asset_id, localId: a.local_asset_id })));
+    // Get all clips that need URL resolution
+    const allClips = getAllClips();
+    const urlsToResolve = new Set<string>();
     
-    // Extract local assets for processing
-    const localAssets = mediaAssets.filter(asset => asset.local_asset_id);
-    console.log('🔍 Found local assets to resolve:', localAssets.length);
-    
-    if (localAssets.length === 0) {
-      console.log('✅ No IndexedDB URLs to resolve');
-      setResolvedUrls(new Map());
-      return;
-    }
-    
-    const resolveAllUrls = async () => {
-      console.log('🔄 Starting URL resolution for', localAssets.length, 'local assets');
-      
-      const { MediaUrlResolver } = await import('@/lib/video/media-url-resolver');
-      const { indexedDBManager } = await import('@/lib/storage/indexed-db-manager');
-      const newResolvedUrls = new Map<string, string>();
-      
-      // First, check which assets actually exist in IndexedDB
-      console.log('🔍 Checking asset availability in IndexedDB...');
-      const availabilityChecks = await Promise.all(
-        localAssets.map(async (asset) => {
-          try {
-            const exists = await indexedDBManager.hasAsset(asset.local_asset_id!);
-            return { asset, exists };
-          } catch (error) {
-            console.error(`❌ Error checking availability for ${asset.local_asset_id}:`, error);
-            return { asset, exists: false };
-          }
-        })
-      );
-      
-      const availableAssets = availabilityChecks.filter(({ exists }) => exists);
-      const missingAssets = availabilityChecks.filter(({ exists }) => !exists);
-      
-      console.log(`✅ Available assets: ${availableAssets.length}`);
-      console.log(`❌ Missing assets: ${missingAssets.length}`);
-      
-      if (missingAssets.length > 0) {
-        console.warn('❌ The following assets are referenced in metadata but missing from IndexedDB:');
-        missingAssets.forEach(({ asset }) => {
-          console.warn(`   - ${asset.file_name} (${asset.local_asset_id}) - needs re-upload`);
-        });
+    allClips.forEach(clip => {
+      const asset = mediaAssets.find(a => a.id === clip.asset_id);
+      if (asset) {
+        const mediaInfo = getMediaInfo(asset);
+        if (mediaInfo.url && MediaUrlResolver.needsResolution(mediaInfo.url)) {
+          urlsToResolve.add(mediaInfo.url);
+        }
       }
-      
-      // Only resolve URLs for assets that actually exist
-      if (availableAssets.length > 0) {
-        console.log('🔄 Resolving URLs for available assets...');
-        
-        const resolutionPromises = availableAssets.map(async ({ asset }) => {
-          try {
-            const indexedDbUrl = `indexeddb://${asset.local_asset_id}`;
-            console.log('🔄 Resolving URL for asset', asset.id, ':', indexedDbUrl);
-            const resolvedUrl = await MediaUrlResolver.resolveUrl(indexedDbUrl);
-            newResolvedUrls.set(asset.id, resolvedUrl);
-            console.log('✅ Pre-resolved URL for asset', asset.id, ':', indexedDbUrl, '->', resolvedUrl);
-            return { id: asset.id, success: true, resolvedUrl };
-          } catch (error) {
-            console.error('❌ Failed to pre-resolve URL for asset', asset.id, ':', error);
-            return { id: asset.id, success: false, error };
-          }
-        });
-        
-        const results = await Promise.all(resolutionPromises);
-        console.log('🎵 URL resolution results:', results);
-      }
-      
-      console.log('🎵 URL resolution complete. Resolved URLs:', newResolvedUrls.size);
-      console.log('🎵 Resolved URL keys:', Array.from(newResolvedUrls.keys()));
-      
-      // Update state with resolved URLs
-      setResolvedUrls(newResolvedUrls);
-    };
-    
-    resolveAllUrls().catch(error => {
-      console.error('❌ URL resolution failed:', error);
-      setResolvedUrls(new Map());
     });
     
-    // React best practice: explicit dependency validation
-  }, [mediaAssets]); // Only mediaAssets needed - keep dependency array minimal
-  
-  // Enhanced getAllClips that includes resolved URLs
+    console.log('🔗 URLs to resolve:', urlsToResolve.size);
+    
+    // Resolve URLs with proper error handling
+    for (const url of urlsToResolve) {
+      try {
+        const localAssetId = url.replace('indexeddb://', '');
+        
+        // First check if asset exists in IndexedDB
+        const exists = await indexedDBManager.hasAsset(localAssetId);
+        
+        if (exists) {
+          const resolvedUrl = await MediaUrlResolver.resolveUrl(url);
+          newResolvedUrls.set(url, resolvedUrl);
+          console.log('✅ Resolved URL:', localAssetId);
+        } else {
+          console.warn(`⚠️ Skipping URL resolution - asset not found in IndexedDB: ${localAssetId}`);
+          // Don't add to resolved URLs - this will prevent audio track creation
+        }
+      } catch (error) {
+        console.error(`❌ Failed to resolve URL ${url}:`, error);
+        // Don't add to resolved URLs on error
+      }
+    }
+    
+    console.log('🔗 URL resolution complete:', newResolvedUrls.size, 'URLs resolved');
+    setResolvedUrls(newResolvedUrls);
+  };
+
+  // Trigger URL resolution when mediaAssets change
+  useEffect(() => {
+    if (mediaAssets.length > 0) {
+      resolveAllUrls().catch(error => {
+        console.error('❌ URL resolution failed:', error);
+        setResolvedUrls(new Map());
+      });
+    } else {
+      setResolvedUrls(new Map());
+    }
+  }, [mediaAssets]); // Only depend on mediaAssets
+
+  // Enhanced getAllClips function with asset existence validation
   const getAllClips = () => {
     const allClips: any[] = [];
     
     tracks.forEach((track: any) => {
       track.clips.forEach((clip: any) => {
         const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
+        
         if (asset) {
           const mediaInfo = getMediaInfo(asset);
-          const originalUrl = mediaInfo.url;
           
-          // Only include clips where we have resolved URLs (i.e., assets exist in IndexedDB)
-          if (asset.local_asset_id) {
-            const resolvedUrl = resolvedUrls.get(asset.id);
-            if (resolvedUrl) {
-              mediaInfo.url = resolvedUrl;
-              console.log('🔄 URL replacement in getAllClips:', {
-                assetId: asset.id,
-                originalUrl,
-                resolvedUrl,
-                hasLocalAssetId: !!asset.local_asset_id
-              });
-              
+          // Only include clips where assets are available locally
+          if (mediaInfo.url && mediaInfo.url.startsWith('indexeddb://')) {
+            const localAssetId = mediaInfo.url.replace('indexeddb://', '');
+            
+            // For now, assume asset exists if it has a local ID
+            // The URL resolution will handle the actual existence check
+            if (localAssetId) {
               allClips.push({
                 ...clip,
                 asset: {
                   ...asset,
-                  ...mediaInfo // Add extracted media info with resolved URL
-                },
-                trackType: track.track_type
+                  ...mediaInfo
+                }
               });
             } else {
-              console.warn('⚠️ Skipping clip with missing asset:', {
+              console.warn(`⚠️ Skipping clip with missing local asset ID:`, {
                 clipId: clip.id,
                 assetId: asset.id,
                 localAssetId: asset.local_asset_id,
                 fileName: asset.file_name,
-                reason: 'Asset not found in IndexedDB'
+                reason: 'No local asset ID'
               });
             }
+          } else if (mediaInfo.url && !mediaInfo.url.startsWith('indexeddb://')) {
+            // Non-IndexedDB URLs (cloud assets) - include them
+            allClips.push({
+              ...clip,
+              asset: {
+                ...asset,
+                ...mediaInfo
+              }
+            });
           } else {
-            // Asset has no local_asset_id, skip it
-            console.warn('⚠️ Skipping clip with asset that has no local_asset_id:', {
+            console.warn(`⚠️ Skipping clip with invalid URL:`, {
               clipId: clip.id,
               assetId: asset.id,
-              fileName: asset.file_name
+              fileName: asset.file_name,
+              url: mediaInfo.url,
+              reason: 'Invalid or missing URL'
             });
           }
         } else {
-          console.warn('⚠️ Clip references missing asset:', {
+          console.warn(`⚠️ Skipping clip with missing asset:`, {
             clipId: clip.id,
-            assetId: clip.asset_id
+            assetId: clip.asset_id,
+            reason: 'Asset not found in mediaAssets'
           });
         }
       });
     });
     
-    return allClips.sort((a: any, b: any) => a.start_time - b.start_time);
+    return allClips;
   };
 
   // Group clips by track type
@@ -2210,6 +2183,94 @@ export function VideoTimeline() {
   const volumeState = getCurrentVolumeState();
 
   // Removed shuttle control functionality as requested
+
+  // Professional audio engine synchronization with resolved URLs
+  useEffect(() => {
+    const allClips = getAllClips();
+    console.log('🎵 Syncing audio engine with', allClips.length, 'clips');
+    
+    // Process clips that have resolved URLs
+    const clipsWithUrls = allClips.filter(clip => {
+      const asset = mediaAssets.find(a => a.id === clip.asset_id);
+      if (!asset) return false;
+      
+      const mediaInfo = getMediaInfo(asset);
+      
+      // For IndexedDB URLs, check if we have a resolved URL
+      if (mediaInfo.url && mediaInfo.url.startsWith('indexeddb://')) {
+        return resolvedUrls.has(mediaInfo.url);
+      }
+      
+      // For other URLs, include them
+      return !!mediaInfo.url;
+    });
+    
+    console.log('🎵 Clips with available URLs:', clipsWithUrls.length);
+    
+    // Track all track IDs that should have audio
+    const activeTrackIds = new Set<string>();
+    
+    // Process audio tracks asynchronously
+    const processAudioTracks = async () => {
+      for (const clip of clipsWithUrls) {
+        const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
+        if (!asset) continue;
+
+        const mediaInfo = getMediaInfo(asset);
+        
+        // Only process audio-capable clips
+        if (mediaInfo.type === 'video' || mediaInfo.type === 'audio') {
+          const trackId = `${clip.track_id}_${clip.id}`;
+          activeTrackIds.add(trackId);
+          
+          // Get the URL (resolved or original)
+          let audioUrl = mediaInfo.url;
+          if (mediaInfo.url && mediaInfo.url.startsWith('indexeddb://')) {
+            audioUrl = resolvedUrls.get(mediaInfo.url) || mediaInfo.url;
+          }
+          
+          // Add/update audio track if we have a valid URL
+          if (audioUrl && !audioUrl.startsWith('indexeddb://')) {
+            try {
+              await audioEngine.addTrack(
+                trackId,
+                audioUrl,
+                clip.start_time,
+                clip.end_time,
+                clip.trim_start || 0,
+                clip.trim_end || (clip.end_time - clip.start_time)
+              );
+              
+              // Set volume and mute state after adding track
+              audioEngine.setTrackVolume(trackId, clip.volume || 1.0);
+              audioEngine.setTrackMuted(trackId, clip.is_muted || false);
+              
+              console.log('🎵 Added audio track:', trackId);
+            } catch (error) {
+              console.error('❌ Failed to add audio track:', trackId, error);
+            }
+          } else {
+            console.warn('⚠️ Skipping audio track - URL not resolved:', trackId);
+          }
+        }
+      }
+      
+      // Clean up orphaned tracks (use debug info to get track IDs)
+      const debugInfo = audioEngine.getDebugInfo();
+      debugInfo.trackIds.forEach((trackId: string) => {
+        if (!activeTrackIds.has(trackId)) {
+          console.log('🗑️ Removing orphaned audio track:', trackId);
+          audioEngine.removeTrack(trackId);
+        }
+      });
+    };
+    
+    // Run async processing
+    processAudioTracks().catch(error => {
+      console.error('❌ Failed to process audio tracks:', error);
+    });
+    
+  }, [tracks, mediaAssets, resolvedUrls, currentTime]); // Include resolvedUrls in dependencies
 
   return (
     <div className="h-full flex flex-col bg-zinc-950">

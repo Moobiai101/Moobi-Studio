@@ -458,27 +458,51 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
       // MEDIA MANAGEMENT ACTIONS
       // ============================================================================
 
-    addMediaAsset: (asset) => {
-      set((state) => ({
-          mediaAssets: [...state.mediaAssets, asset]
-      }));
-      triggerAutoSave();
-    },
-
-      removeMediaAsset: (id) => {
-      set((state) => ({
-          mediaAssets: state.mediaAssets.filter((asset) => asset.id !== id),
-          selectedMediaId: state.selectedMediaId === id ? null : state.selectedMediaId
-        }));
+      addMediaAsset: (asset) => {
+        set((state) => {
+          // Check for duplicates before adding
+          const existingAsset = state.mediaAssets.find(a => a.id === asset.id);
+          if (existingAsset) {
+            console.log('⚠️ Asset already exists, skipping duplicate:', asset.id);
+            return state; // Return unchanged state
+          }
+          
+          console.log('✅ Adding new media asset:', asset.id, asset.file_name);
+          return {
+            mediaAssets: [...state.mediaAssets, asset]
+          };
+        });
         triggerAutoSave();
       },
 
-    setSelectedMediaId: (id) => set({ selectedMediaId: id }),
+      removeMediaAsset: (id) => {
+        set((state) => {
+          const assetExists = state.mediaAssets.some(asset => asset.id === id);
+          if (!assetExists) {
+            console.log('⚠️ Asset not found for removal:', id);
+            return state; // Return unchanged state
+          }
+          
+          console.log('🗑️ Removing media asset:', id);
+          return {
+            mediaAssets: state.mediaAssets.filter((asset) => asset.id !== id),
+            selectedMediaId: state.selectedMediaId === id ? null : state.selectedMediaId
+          };
+        });
+        triggerAutoSave();
+      },
+
+      setSelectedMediaId: (id) => set({ selectedMediaId: id }),
 
       refreshMediaAssets: async () => {
         try {
+          console.log('🔄 Refreshing media assets...');
           const mediaAssets = await VideoProjectService.getUserVideoAssets();
-          set({ mediaAssets });
+          
+          set((state) => {
+            console.log(`🔄 Refreshed: ${state.mediaAssets.length} -> ${mediaAssets.length} assets`);
+            return { mediaAssets };
+          });
         } catch (error) {
           console.error('Error refreshing media assets:', error);
         }

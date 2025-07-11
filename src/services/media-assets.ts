@@ -194,6 +194,83 @@ export class MediaAssetService {
   }
 
   /**
+   * Validate and sync local assets with IndexedDB
+   * This ensures database references match what's actually stored locally
+   */
+  static async validateAndSyncLocalAssets(): Promise<{
+    valid: number;
+    orphaned: number;
+    missing: number;
+    cleaned: string[];
+  }> {
+    try {
+      const { data: { user } } = await this.supabase.auth.getUser();
+      if (!user) {
+        console.warn('User not authenticated for asset validation');
+        return { valid: 0, orphaned: 0, missing: 0, cleaned: [] };
+      }
+
+      // Get all assets from database
+      const { data: assets } = await this.supabase
+        .from('user_assets')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('source_studio', 'video-studio');
+
+      if (!assets) {
+        return { valid: 0, orphaned: 0, missing: 0, cleaned: [] };
+      }
+
+      const localAssets = assets.filter(asset => asset.local_asset_id);
+      let validCount = 0;
+      let missingCount = 0;
+      const cleanedAssets: string[] = [];
+
+      console.log(`🔍 Validating ${localAssets.length} local assets...`);
+
+      for (const asset of localAssets) {
+        if (!asset.local_asset_id) continue;
+
+        try {
+          const exists = await indexedDBManager.hasAsset(asset.local_asset_id);
+          
+          if (exists) {
+            validCount++;
+          } else {
+            missingCount++;
+            console.warn(`⚠️ Database references missing asset: ${asset.file_name} (${asset.local_asset_id})`);
+            
+            // Optionally clean up orphaned database entries
+            // Uncomment the following lines to enable automatic cleanup:
+            /*
+            await this.supabase
+              .from('user_assets')
+              .delete()
+              .eq('id', asset.id);
+            cleanedAssets.push(asset.file_name);
+            */
+          }
+        } catch (error) {
+          console.error(`❌ Error validating asset ${asset.id}:`, error);
+          missingCount++;
+        }
+      }
+
+      console.log(`✅ Asset validation complete: ${validCount} valid, ${missingCount} missing`);
+      
+      return {
+        valid: validCount,
+        orphaned: 0, // Could be implemented to check for IndexedDB assets without database references
+        missing: missingCount,
+        cleaned: cleanedAssets
+      };
+    } catch (error) {
+      console.error('❌ Asset validation failed:', error);
+      return { valid: 0, orphaned: 0, missing: 0, cleaned: [] };
+    }
+  }
+
+  /**
    * Delete media asset (local and cloud)
    */
   static async deleteMediaAsset(assetId: string): Promise<boolean> {

@@ -98,7 +98,7 @@ export class MediaUrlResolver {
 }
 
 // React hook for using media URLs
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 export function useResolvedMediaUrl(originalUrl: string): {
   url: string;
@@ -109,37 +109,65 @@ export function useResolvedMediaUrl(originalUrl: string): {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   
+  // Use ref to track if component is mounted to prevent state updates after unmount
+  const mountedRef = useRef(true);
+  
   useEffect(() => {
-    let cancelled = false;
-    
-    if (MediaUrlResolver.needsResolution(originalUrl)) {
-      setIsLoading(true);
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+  
+  useEffect(() => {
+    // Reset state immediately when URL changes
+    if (!originalUrl) {
+      setResolvedUrl('');
+      setIsLoading(false);
       setError(null);
-      
-      MediaUrlResolver.resolveUrl(originalUrl)
-        .then((url) => {
-          if (!cancelled) {
-            setResolvedUrl(url);
-            setIsLoading(false);
-          }
-        })
-        .catch((err) => {
-          if (!cancelled) {
-            setError(err);
-            setResolvedUrl(originalUrl); // Fallback to original
-            setIsLoading(false);
-          }
-        });
-    } else {
+      return;
+    }
+    
+    // If URL doesn't need resolution, set it immediately
+    if (!MediaUrlResolver.needsResolution(originalUrl)) {
       setResolvedUrl(originalUrl);
       setIsLoading(false);
       setError(null);
+      return;
     }
+    
+    // Start resolution process
+    setIsLoading(true);
+    setError(null);
+    
+    let cancelled = false;
+    
+    const resolveUrl = async () => {
+      try {
+        const url = await MediaUrlResolver.resolveUrl(originalUrl);
+        
+        if (!cancelled && mountedRef.current) {
+          setResolvedUrl(url);
+          setIsLoading(false);
+          setError(null);
+        }
+      } catch (err) {
+        if (!cancelled && mountedRef.current) {
+          const error = err instanceof Error ? err : new Error('URL resolution failed');
+          console.warn(`⚠️ URL resolution failed for ${originalUrl}:`, error.message);
+          
+          setError(error);
+          setResolvedUrl(originalUrl); // Fallback to original
+          setIsLoading(false);
+        }
+      }
+    };
+    
+    resolveUrl();
     
     return () => {
       cancelled = true;
     };
-  }, [originalUrl]);
+  }, [originalUrl]); // Only depend on originalUrl to prevent infinite loops
   
   return { url: resolvedUrl, isLoading, error };
 } 
