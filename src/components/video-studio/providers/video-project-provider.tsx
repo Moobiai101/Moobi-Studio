@@ -28,11 +28,14 @@ export function VideoProjectProvider({
   useEffect(() => {
     const initializeProject = async () => {
       try {
+        // Handle undefined projectId case
+        const resolvedProjectId = projectId || 'default-project';
+        
         // Create store for this project
-        storeRef.current = createVideoProjectStore({ projectId });
+        storeRef.current = createVideoProjectStore({ projectId: resolvedProjectId });
         
         // Initialize the project
-        await storeRef.current.getState().initializeProject(projectId);
+        await storeRef.current.getState().initializeProject(resolvedProjectId);
         
         // Load media assets
         const mediaAssets = await MediaAssetService.getUserAssets();
