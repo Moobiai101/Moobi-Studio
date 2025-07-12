@@ -17,6 +17,9 @@ import {
 } from "@/types/database";
 import { MediaAssetService } from "@/services/media-assets";
 import { indexedDBManager } from "@/lib/storage/indexed-db-manager";
+import { createClient } from "@/lib/supabase/client";
+
+const supabase = createClient();
 
 // Auto-save delays
 const AUTO_SAVE_DELAY = 3000; // 3 seconds for project state
@@ -149,6 +152,8 @@ export interface VideoProjectState {
   removeMediaAsset: (id: string) => void;
   setSelectedMediaId: (id: string | null) => void;
   refreshMediaAssets: () => Promise<void>;
+  recoverAndCleanupAssets: () => Promise<{ success: boolean; stats?: any; error?: string }>;
+  validateAssetIntegrity: (assetId: string) => Promise<{ valid: boolean; error?: string }>;
   
   // Actions - Track Management
   addTrack: (type: 'video' | 'audio' | 'overlay' | 'text') => Promise<void>;
@@ -390,6 +395,22 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
             snapToGrid: getTimelineDataProperty(project.timeline_data, 'snapToGrid', true),
             gridSize: getTimelineDataProperty(project.timeline_data, 'gridSize', 1)
           });
+
+          // Production-grade: Auto-recovery on project load
+          console.log('🔧 Running automatic asset recovery on project initialization...');
+          setTimeout(async () => {
+            try {
+              const recoveryResult = await get().recoverAndCleanupAssets();
+              if (recoveryResult.success && recoveryResult.stats) {
+                const { orphaned, missing, corrupted, final } = recoveryResult.stats;
+                if (orphaned > 0 || missing > 0 || corrupted > 0) {
+                  console.log(`🔧 Auto-recovery completed: removed ${orphaned + corrupted} invalid assets, recovered ${missing} missing assets, final count: ${final}`);
+                }
+              }
+            } catch (error) {
+              console.warn('⚠️ Auto-recovery failed, but project can continue:', error);
+            }
+          }, 1000); // Short delay to allow initial state to settle
           
           // Device activity tracking removed in simplified approach
           
@@ -459,17 +480,67 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
       // ============================================================================
 
     addMediaAsset: (asset) => {
-      set((state) => ({
-          mediaAssets: [...state.mediaAssets, asset]
-      }));
+      set((state) => {
+        // Production-grade duplicate prevention with multiple checks
+        const existingAssetIndex = state.mediaAssets.findIndex((existing) => {
+          // Primary check: exact ID match
+          if (existing.id === asset.id) return true;
+          
+          // Secondary check: local asset ID match (for IndexedDB assets)
+          if (asset.local_asset_id && existing.local_asset_id === asset.local_asset_id) return true;
+          
+          // Tertiary check: R2 object key match (for cloud assets)
+          if (asset.r2_object_key && existing.r2_object_key === asset.r2_object_key && 
+              !asset.r2_object_key.startsWith('local_') && !asset.r2_object_key.startsWith('blob:')) return true;
+          
+          // Quaternary check: content-based matching for blob URLs and identical files
+          if (existing.file_name === asset.file_name && 
+              existing.file_size_bytes === asset.file_size_bytes &&
+              existing.content_type === asset.content_type &&
+              Math.abs((existing.duration_seconds || 0) - (asset.duration_seconds || 0)) < 0.1) return true;
+          
+          return false;
+        });
+
+        if (existingAssetIndex !== -1) {
+          // Asset already exists - update it instead of adding duplicate
+          console.log('🔄 Asset already exists, updating instead of duplicating:', asset.id || asset.file_name);
+          const updatedAssets = [...state.mediaAssets];
+          updatedAssets[existingAssetIndex] = {
+            ...updatedAssets[existingAssetIndex],
+            ...asset,
+            // Preserve critical IDs to maintain references
+            id: updatedAssets[existingAssetIndex].id,
+            created_at: updatedAssets[existingAssetIndex].created_at,
+            updated_at: new Date().toISOString()
+          };
+          
+          return { mediaAssets: updatedAssets };
+        } else {
+          // New asset - add to collection
+          console.log('✅ Adding new asset to collection:', asset.id || asset.file_name);
+          return { mediaAssets: [...state.mediaAssets, asset] };
+        }
+      });
       triggerAutoSave();
     },
 
       removeMediaAsset: (id) => {
-      set((state) => ({
+      set((state) => {
+        // Production-grade removal with cascade cleanup
+        const assetToRemove = state.mediaAssets.find(asset => asset.id === id);
+        if (!assetToRemove) {
+          console.warn('🚫 Attempted to remove non-existent asset:', id);
+          return {};
+        }
+        
+        console.log('🗑️ Removing asset and cleaning up references:', assetToRemove.file_name);
+        
+        return {
           mediaAssets: state.mediaAssets.filter((asset) => asset.id !== id),
           selectedMediaId: state.selectedMediaId === id ? null : state.selectedMediaId
-        }));
+        };
+      });
         triggerAutoSave();
       },
 
@@ -481,6 +552,188 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           set({ mediaAssets });
         } catch (error) {
           console.error('Error refreshing media assets:', error);
+        }
+      },
+
+      // Production-grade asset recovery and cleanup
+      recoverAndCleanupAssets: async () => {
+        const state = get();
+        console.log('🔧 Starting asset recovery and cleanup process...');
+
+        try {
+          // Step 1: Fetch fresh assets from database
+          const freshAssets = await VideoProjectService.getUserVideoAssets();
+          console.log(`📥 Fetched ${freshAssets.length} assets from database`);
+
+          // Step 2: Analyze current vs fresh assets
+          const currentAssetIds = new Set(state.mediaAssets.map(a => a.id));
+          const freshAssetIds = new Set(freshAssets.map(a => a.id));
+
+          // Find orphaned assets (in store but not in DB)
+          const orphanedAssets = state.mediaAssets.filter(asset => !freshAssetIds.has(asset.id));
+          
+          // Find missing assets (in DB but not in store)
+          const missingAssets = freshAssets.filter(asset => !currentAssetIds.has(asset.id));
+
+          // Step 3: Validate local asset integrity for local assets
+          const corruptedAssets: any[] = [];
+          const validatedAssets: any[] = [];
+          
+          for (const asset of freshAssets) {
+            if (asset.local_asset_id && asset.is_local_available) {
+              try {
+                const validation = await indexedDBManager.validateAssetIntegrity(asset.local_asset_id);
+                if (!validation.valid) {
+                  console.error(`🚫 Asset ${asset.file_name} is corrupted:`, validation.error);
+                  corruptedAssets.push({
+                    ...asset,
+                    _corruptionReason: validation.error,
+                    _missingChunks: validation.missingChunks
+                  });
+                } else {
+                  validatedAssets.push(asset);
+                }
+              } catch (error) {
+                console.error(`❌ Failed to validate asset ${asset.file_name}:`, error);
+                corruptedAssets.push({
+                  ...asset,
+                  _corruptionReason: 'Validation failed',
+                  _validationError: error
+                });
+              }
+            } else {
+              // Non-local assets are considered valid for now
+              validatedAssets.push(asset);
+            }
+          }
+
+          // Step 4: Clean up corrupted assets from IndexedDB
+          const indexedDbCleanup = await indexedDBManager.cleanupCorruptedAssets();
+          console.log(`🗑️ Cleaned up ${indexedDbCleanup.removed} corrupted assets from IndexedDB`);
+          if (indexedDbCleanup.errors.length > 0) {
+            console.warn('⚠️ Some cleanup errors occurred:', indexedDbCleanup.errors);
+          }
+
+          // Step 5: Update asset availability flags for corrupted assets in database
+          for (const corruptedAsset of corruptedAssets) {
+            try {
+              await supabase
+                .from('user_assets')
+                .update({ 
+                  is_local_available: false,
+                  local_storage_key: null 
+                })
+                .eq('id', corruptedAsset.id);
+              
+              console.log(`📝 Updated database for corrupted asset: ${corruptedAsset.file_name}`);
+            } catch (error) {
+              console.error(`❌ Failed to update corrupted asset ${corruptedAsset.file_name}:`, error);
+            }
+          }
+
+          // Step 6: Apply clean asset list to store
+          const cleanAssets = validatedAssets.filter(asset => !corruptedAssets.some(c => c.id === asset.id));
+          
+          set({ mediaAssets: cleanAssets });
+
+          // Generate comprehensive report
+          const stats = {
+            totalProcessed: freshAssets.length,
+            orphanedRemoved: orphanedAssets.length,
+            missingRecovered: missingAssets.length,
+            corruptedFound: corruptedAssets.length,
+            validAssets: cleanAssets.length,
+            indexedDbCleaned: indexedDbCleanup.removed
+          };
+
+          console.log(`📊 Asset recovery analysis complete:
+            - Total assets processed: ${stats.totalProcessed}
+            - Valid assets: ${stats.validAssets}
+            - Corrupted assets found: ${stats.corruptedFound}
+            - Orphaned assets removed: ${stats.orphanedRemoved}
+            - Missing assets recovered: ${stats.missingRecovered}
+            - IndexedDB cleanup: ${stats.indexedDbCleaned} removed`);
+
+          // Log detailed corruption information
+          if (corruptedAssets.length > 0) {
+            console.group('🚫 Corrupted Assets Details:');
+            corruptedAssets.forEach(asset => {
+              console.log(`- ${asset.file_name}: ${asset._corruptionReason}`);
+              if (asset._missingChunks?.length > 0) {
+                console.log(`  Missing chunks: ${asset._missingChunks.join(', ')}`);
+              }
+            });
+            console.groupEnd();
+          }
+
+          const finalMessage = stats.corruptedFound > 0 
+            ? `⚠️ Recovery completed with ${stats.corruptedFound} corrupted assets removed`
+            : `✅ Asset recovery completed successfully`;
+
+          console.log(`${finalMessage}:
+            - Final asset count: ${stats.validAssets}
+            - Corrupted/removed: ${stats.corruptedFound}
+            - System integrity: ${stats.validAssets > 0 ? 'Good' : 'Needs attention'}`);
+
+          return { 
+            success: true, 
+            stats,
+            corruptedAssets: corruptedAssets.map(a => ({
+              id: a.id,
+              fileName: a.file_name,
+              reason: a._corruptionReason,
+              missingChunks: a._missingChunks
+            }))
+          };
+
+        } catch (error) {
+          console.error('❌ Asset recovery failed:', error);
+          return { 
+            success: false, 
+            error: error instanceof Error ? error.message : 'Unknown error',
+            stats: { totalProcessed: 0, validAssets: 0, corruptedFound: 0 }
+          };
+        }
+      },
+
+      // Validate asset integrity
+      validateAssetIntegrity: async (assetId: string) => {
+        const state = get();
+        const asset = state.mediaAssets.find(a => a.id === assetId);
+        
+        if (!asset) {
+          return { valid: false, error: 'Asset not found in store' };
+        }
+
+        try {
+          // Basic structure validation
+          if (!asset.id || !asset.file_name || !asset.content_type) {
+            return { valid: false, error: 'Missing required asset properties' };
+          }
+
+          // Media info extraction validation
+          const mediaInfo = getMediaInfo(asset);
+          if (!mediaInfo.type || !mediaInfo.name) {
+            return { valid: false, error: 'Failed to extract media information' };
+          }
+
+          // Local asset availability check (if applicable)
+          if (asset.local_asset_id) {
+            try {
+              const storageInfo = await indexedDBManager.getStorageInfo();
+              // Additional checks could be added here
+            } catch (storageError) {
+              return { valid: false, error: 'Local storage validation failed' };
+            }
+          }
+
+          return { valid: true };
+
+        } catch (error) {
+          return { 
+            valid: false, 
+            error: error instanceof Error ? error.message : 'Validation error' 
+          };
         }
       },
 

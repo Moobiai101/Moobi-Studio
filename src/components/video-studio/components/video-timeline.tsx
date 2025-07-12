@@ -69,6 +69,7 @@ import {
 import { useVideoFilmstrips } from "../hooks/use-video-filmstrips";
 import { Slider } from "@/components/ui/slider";
 import { audioEngine } from "../lib/audio-engine";
+import { MediaAssetService } from "@/services/media-assets";
 
 // Video Clip Component with Filmstrip Support
 interface VideoClipProps {
@@ -1337,80 +1338,32 @@ export function VideoTimeline() {
     return undefined; // Default track selection will be handled by addClipToTimeline
   };
 
-  // Upload and create media asset
+  // Production-grade upload using MediaAssetService (no manual asset creation)
   const uploadAndCreateMediaAsset = async (file: File): Promise<any | null> => {
     try {
-      const url = URL.createObjectURL(file);
-      const type = detectFileType(file);
+      console.log('🎬 Uploading dropped file via proper service:', file.name);
       
-      if (type === "unknown") {
-        console.warn(`Unsupported file type: ${file.name}`);
+             // Use the proper MediaAssetService for consistent upload handling
+       const result = await MediaAssetService.uploadMediaAsset(file, {
+         onProgress: (progress: number) => {
+           console.log(`📤 Upload progress for ${file.name}: ${Math.round(progress)}%`);
+         },
+         onStatusChange: (status: string) => {
+           console.log(`📤 Upload status for ${file.name}: ${status}`);
+         }
+       });
+
+      if (result.success && result.asset) {
+        // Add the asset to the project store (with proper duplication checking)
+        addMediaAsset(result.asset);
+        console.log('✅ Asset uploaded and added to project:', file.name);
+        return result.asset;
+      } else {
+        console.error('❌ Failed to upload asset:', result.error);
         return null;
       }
-
-      let duration = 5;
-      let dimensions: { width: number; height: number } | undefined;
-      let video_metadata: any = undefined;
-
-      try {
-        if (type === "video") {
-          const videoMeta = await getVideoMetadata(url);
-          duration = videoMeta.duration;
-          dimensions = {
-            width: videoMeta.width,
-            height: videoMeta.height,
-          };
-          video_metadata = {
-            fps: videoMeta.fps,
-            codec: 'unknown',
-            bitrate: 'unknown',
-          };
-        } else if (type === "audio") {
-          duration = await getMediaDuration(url, "audio");
-        } else if (type === "image") {
-          duration = 5;
-          const imageDims = await getImageDimensions(url);
-          dimensions = {
-            width: imageDims.width,
-            height: imageDims.height,
-          };
-        }
-      } catch (metaError) {
-        console.warn(`Could not extract metadata for ${file.name}:`, metaError);
-        duration = type === "image" ? 5 : 10;
-      }
-
-      // Create the media asset with blob URL
-      const assetId = `local-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-      const assetToAdd = {
-        id: assetId,
-        user_id: '', // Will be set by the addMediaAsset function
-        title: file.name,
-        description: '',
-        tags: [],
-        r2_object_key: url, // Using blob URL temporarily
-        file_name: file.name,
-        content_type: file.type,
-        file_size_bytes: file.size,
-        source_studio: 'video-studio',
-        duration_seconds: duration,
-        dimensions,
-        video_metadata,
-        thumbnails_generated: false,
-        filmstrip_generated: false,
-        ai_generated: false,
-        ai_generation_data: {},
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-
-      addMediaAsset(assetToAdd);
-      
-      const createdAsset = mediaAssets.find((a: any) => a.id === assetId);
-      
-      return createdAsset || null;
     } catch (error) {
-      console.error("Error creating media asset:", error);
+      console.error("❌ Error uploading media asset:", error);
       return null;
     }
   };

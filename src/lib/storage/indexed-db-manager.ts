@@ -207,15 +207,35 @@ class IndexedDBManager {
     
     // Get metadata
     const metadata = await this.db.get('asset_metadata', assetId);
-    if (!metadata) throw new Error('Asset not found');
+    if (!metadata) {
+      throw new Error('Asset not found');
+    }
     
-    // Get all chunks
-    const chunks: Blob[] = [];
+    // Get all chunks with validation
+    const chunks: Blob[] = new Array(metadata.totalChunks);
     const tx = this.db.transaction('media_chunks', 'readonly');
     const index = tx.objectStore('media_chunks').index('by-asset');
     
+    let foundChunks = 0;
     for await (const cursor of index.iterate(assetId)) {
-      chunks[cursor.value.chunkIndex] = cursor.value.data;
+      if (cursor.value.chunkIndex < metadata.totalChunks) {
+        chunks[cursor.value.chunkIndex] = cursor.value.data;
+        foundChunks++;
+      }
+    }
+    
+    // Validate that all chunks are present
+    if (foundChunks !== metadata.totalChunks) {
+      console.error(`🚫 Asset ${localAssetId} is corrupted: found ${foundChunks}/${metadata.totalChunks} chunks`);
+      throw new Error(`Asset corrupted: missing ${metadata.totalChunks - foundChunks} chunks`);
+    }
+    
+    // Check for any undefined chunks
+    for (let i = 0; i < chunks.length; i++) {
+      if (!chunks[i]) {
+        console.error(`🚫 Asset ${localAssetId} missing chunk ${i}`);
+        throw new Error(`Asset corrupted: chunk ${i} is missing`);
+      }
     }
     
     // Update last accessed
@@ -419,6 +439,115 @@ class IndexedDBManager {
     }
     
     await tx.done;
+  }
+
+  // ===== ASSET VALIDATION =====
+  
+  async validateAssetIntegrity(localAssetId: string): Promise<{ valid: boolean; error?: string; missingChunks?: number[] }> {
+    try {
+      await this.initialize();
+      if (!this.db) return { valid: false, error: 'Database not initialized' };
+      
+      const assetId = localAssetId.replace('local_', '');
+      
+      // Check metadata exists
+      const metadata = await this.db.get('asset_metadata', assetId);
+      if (!metadata) {
+        return { valid: false, error: 'Asset metadata not found' };
+      }
+      
+      // Check chunks
+      const foundChunks = new Set<number>();
+      const tx = this.db.transaction('media_chunks', 'readonly');
+      const index = tx.objectStore('media_chunks').index('by-asset');
+      
+      for await (const cursor of index.iterate(assetId)) {
+        foundChunks.add(cursor.value.chunkIndex);
+      }
+      
+      // Find missing chunks
+      const missingChunks: number[] = [];
+      for (let i = 0; i < metadata.totalChunks; i++) {
+        if (!foundChunks.has(i)) {
+          missingChunks.push(i);
+        }
+      }
+      
+      if (missingChunks.length > 0) {
+        return { 
+          valid: false, 
+          error: `Missing ${missingChunks.length} chunks`, 
+          missingChunks 
+        };
+      }
+      
+      return { valid: true };
+    } catch (error) {
+      return { 
+        valid: false, 
+        error: error instanceof Error ? error.message : 'Unknown error' 
+      };
+    }
+  }
+  
+  async listCorruptedAssets(): Promise<Array<{ localAssetId: string; error: string; missingChunks?: number[] }>> {
+    try {
+      await this.initialize();
+      if (!this.db) return [];
+      
+      const corruptedAssets: Array<{ localAssetId: string; error: string; missingChunks?: number[] }> = [];
+      
+      // Get all metadata
+      const allMetadata = await this.db.getAll('asset_metadata');
+      
+      for (const metadata of allMetadata) {
+        const localAssetId = `local_${metadata.assetId}`;
+        const validation = await this.validateAssetIntegrity(localAssetId);
+        
+        if (!validation.valid) {
+          corruptedAssets.push({
+            localAssetId,
+            error: validation.error || 'Unknown error',
+            missingChunks: validation.missingChunks
+          });
+        }
+      }
+      
+      return corruptedAssets;
+    } catch (error) {
+      console.error('Error listing corrupted assets:', error);
+      return [];
+    }
+  }
+  
+  async cleanupCorruptedAssets(): Promise<{ removed: number; errors: string[] }> {
+    try {
+      await this.initialize();
+      if (!this.db) return { removed: 0, errors: ['Database not initialized'] };
+      
+      const corruptedAssets = await this.listCorruptedAssets();
+      const errors: string[] = [];
+      let removed = 0;
+      
+      for (const corrupted of corruptedAssets) {
+        try {
+          await this.deleteAsset(corrupted.localAssetId);
+          console.log(`🗑️ Removed corrupted asset: ${corrupted.localAssetId}`);
+          removed++;
+        } catch (error) {
+          const errorMsg = `Failed to remove ${corrupted.localAssetId}: ${error}`;
+          console.error(errorMsg);
+          errors.push(errorMsg);
+        }
+      }
+      
+      return { removed, errors };
+    } catch (error) {
+      return { 
+        removed: 0, 
+        errors: [error instanceof Error ? error.message : 'Unknown error'] 
+      };
+    }
   }
 }
 

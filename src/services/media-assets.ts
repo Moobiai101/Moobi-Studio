@@ -234,14 +234,232 @@ export class MediaAssetService {
   }
 
   /**
-   * Get asset from IndexedDB
+   * Get a local asset URL with enhanced error handling and recovery
    */
   static async getLocalAssetUrl(localAssetId: string): Promise<string> {
     try {
-      return await indexedDBManager.getMediaAssetUrl(localAssetId);
+      // Remove 'local_' prefix if present to get the actual asset ID
+      const cleanAssetId = localAssetId.startsWith('local_') ? localAssetId.replace('local_', '') : localAssetId;
+      
+      // First check if the asset exists and is valid
+      const validation = await indexedDBManager.validateAssetIntegrity(cleanAssetId);
+      if (!validation.valid) {
+        console.error(`🚫 Asset integrity check failed for ${cleanAssetId}:`, validation.error);
+        throw new Error(`Asset corrupted: ${validation.error}`);
+      }
+      
+      const blob = await indexedDBManager.getMediaAssetBlob(cleanAssetId);
+      const url = URL.createObjectURL(blob);
+      
+      console.log(`✅ Retrieved local asset URL for: ${cleanAssetId}`);
+      return url;
     } catch (error) {
-      console.error('Error getting local asset:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error(`❌ Error getting local asset: ${errorMessage}`);
+      
+      // Enhanced error handling with specific error types
+      if (errorMessage.includes('corrupted') || errorMessage.includes('missing')) {
+        // Mark asset as unavailable and trigger cleanup
+        try {
+          await this.markAssetAsUnavailable(localAssetId.replace('local_', ''));
+        } catch (markError) {
+          console.error('Failed to mark asset as unavailable:', markError);
+        }
+      }
+      
       throw error;
+    }
+  }
+
+  /**
+   * Mark an asset as locally unavailable in the database
+   */
+  private static async markAssetAsUnavailable(assetId: string): Promise<void> {
+    try {
+      const { error } = await supabase
+        .from('user_assets')
+        .update({ 
+          is_local_available: false,
+          local_storage_key: null,
+          local_asset_id: null
+        })
+        .eq('id', assetId);
+      
+      if (error) throw error;
+      
+      console.log(`📝 Marked asset ${assetId} as locally unavailable`);
+    } catch (error) {
+      console.error(`❌ Failed to mark asset ${assetId} as unavailable:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Attempt to recover a corrupted or missing asset
+   */
+  static async attemptAssetRecovery(assetId: string): Promise<{ success: boolean; message: string; newUrl?: string }> {
+    try {
+      // Try to find the asset in database
+      const { data: asset, error } = await supabase
+        .from('user_assets')
+        .select('*')
+        .eq('id', assetId)
+        .single();
+
+      if (error || !asset) {
+        return { 
+          success: false, 
+          message: 'Asset not found in database - may need to be re-uploaded' 
+        };
+      }
+
+      // If asset has R2 key, try to restore from cloud
+      if (asset.r2_object_key && !asset.r2_object_key.startsWith('local_')) {
+        try {
+          const cloudUrl = this.getAssetUrl(asset.r2_object_key);
+          
+          // Test if cloud URL is accessible
+          const response = await fetch(cloudUrl, { method: 'HEAD' });
+          if (response.ok) {
+            // Update database to reflect cloud availability
+            await supabase
+              .from('user_assets')
+              .update({ 
+                is_local_available: false,
+                local_storage_key: null,
+                local_asset_id: null
+              })
+              .eq('id', assetId);
+            
+            return { 
+              success: true, 
+              message: 'Asset recovered from cloud storage',
+              newUrl: cloudUrl
+            };
+          }
+        } catch (cloudError) {
+          console.warn('Cloud recovery failed:', cloudError);
+        }
+      }
+
+      // If all recovery attempts fail
+      return { 
+        success: false, 
+        message: 'Asset recovery failed - file needs to be re-uploaded' 
+      };
+
+    } catch (error) {
+      console.error('Asset recovery error:', error);
+      return { 
+        success: false, 
+        message: `Recovery error: ${error instanceof Error ? error.message : 'Unknown error'}` 
+      };
+    }
+  }
+
+  /**
+   * Validate and repair asset integrity across the entire library
+   */
+  static async validateAndRepairAssetLibrary(): Promise<{
+    total: number;
+    valid: number;
+    corrupted: number;
+    recovered: number;
+    failed: number;
+    report: Array<{ assetId: string; fileName: string; status: string; action: string }>;
+  }> {
+    console.log('🔧 Starting comprehensive asset library validation...');
+    
+    const report: Array<{ assetId: string; fileName: string; status: string; action: string }> = [];
+    let stats = { total: 0, valid: 0, corrupted: 0, recovered: 0, failed: 0 };
+
+    try {
+      // Get all user assets
+      const { data: assets, error } = await supabase
+        .from('user_assets')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      if (!assets) return { ...stats, report };
+
+      stats.total = assets.length;
+      console.log(`📊 Found ${stats.total} assets to validate`);
+
+      for (const asset of assets) {
+        const fileName = asset.file_name || 'Unnamed';
+        
+        try {
+          // Check local availability first
+          if (asset.is_local_available && asset.local_asset_id) {
+            const validation = await indexedDBManager.validateAssetIntegrity(asset.local_asset_id);
+            
+            if (validation.valid) {
+              stats.valid++;
+              report.push({ 
+                assetId: asset.id, 
+                fileName, 
+                status: 'valid', 
+                action: 'none' 
+              });
+            } else {
+              stats.corrupted++;
+              console.log(`🚫 Corrupted local asset found: ${fileName}`);
+              
+              // Attempt recovery
+              const recovery = await this.attemptAssetRecovery(asset.id);
+              if (recovery.success) {
+                stats.recovered++;
+                report.push({ 
+                  assetId: asset.id, 
+                  fileName, 
+                  status: 'corrupted', 
+                  action: 'recovered' 
+                });
+              } else {
+                stats.failed++;
+                report.push({ 
+                  assetId: asset.id, 
+                  fileName, 
+                  status: 'corrupted', 
+                  action: 'failed' 
+                });
+              }
+            }
+          } else {
+            // Non-local or cloud-only assets
+            stats.valid++;
+            report.push({ 
+              assetId: asset.id, 
+              fileName, 
+              status: 'cloud', 
+              action: 'none' 
+            });
+          }
+        } catch (assetError) {
+          stats.failed++;
+          console.error(`❌ Error validating asset ${fileName}:`, assetError);
+          report.push({ 
+            assetId: asset.id, 
+            fileName, 
+            status: 'error', 
+            action: 'failed' 
+          });
+        }
+      }
+
+      console.log(`📊 Asset validation complete:
+        - Total: ${stats.total}
+        - Valid: ${stats.valid}
+        - Corrupted: ${stats.corrupted}
+        - Recovered: ${stats.recovered}
+        - Failed: ${stats.failed}`);
+
+      return { ...stats, report };
+
+    } catch (error) {
+      console.error('❌ Asset library validation failed:', error);
+      return { ...stats, report };
     }
   }
 

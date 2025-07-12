@@ -59,7 +59,7 @@ const ResolvedVideo: React.FC<{
     );
   }
   
-  if (error) {
+  if (error || !resolvedUrl) {
     console.error('Video URL resolution error:', error);
     onError?.(error);
     return (
@@ -72,7 +72,7 @@ const ResolvedVideo: React.FC<{
         color: 'white',
         fontSize: '12px'
       }}>
-        Video Error
+        {error ? 'Video Error' : 'No Video URL'}
       </div>
     );
   }
@@ -114,7 +114,7 @@ const ResolvedImg: React.FC<{
     );
   }
   
-  if (error) {
+  if (error || !resolvedUrl) {
     console.error('Image URL resolution error:', error);
     onError?.(error);
     return (
@@ -127,7 +127,7 @@ const ResolvedImg: React.FC<{
         color: 'white',
         fontSize: '12px'
       }}>
-        Image Error
+        {error ? 'Image Error' : 'No Image URL'}
       </div>
     );
   }
