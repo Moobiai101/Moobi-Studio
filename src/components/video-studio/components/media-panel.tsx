@@ -23,193 +23,114 @@ import {
   PanelLeft
 } from "lucide-react";
 import { formatTime } from "../lib/utils";
+import { 
+  detectFileType, 
+  getMediaDuration, 
+  getVideoMetadata, 
+  getImageDimensions 
+} from "../lib/media-utils";
 import { getMediaInfo } from "../store/video-project-store";
-import { MediaAssetService } from "@/services/media-assets";
-import { toast } from "sonner";
-import { indexedDBManager } from "@/lib/storage/indexed-db-manager";
-import { useResolvedMediaUrl } from "@/lib/video/media-url-resolver";
 
 export function MediaPanel() {
-  const { mediaAssets, addMediaAsset } = useVideoProject();
+  const { project, addMediaAsset } = useVideoProject();
   const [searchQuery, setSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [isUploading, setIsUploading] = useState(false);
 
   // Filter media assets based on search query
-  const filteredAssets = mediaAssets.filter((asset: any) => {
-    const mediaInfo = getMediaInfo(asset);
-    const name = mediaInfo?.name ?? '';
-    const query = searchQuery ?? '';
-    // Add null safety checks
-    return name && typeof name === 'string' 
-      ? name.toLowerCase().includes(query.toLowerCase())
-      : false;
-  });
+  const filteredAssets = project.mediaAssets.filter(asset =>
+    getMediaInfo(asset).name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files || files.length === 0) {
-      console.warn('🚫 No files selected for upload');
-      return;
-    }
-
-    // Production-grade validation before processing
-    const validFiles: File[] = [];
-    const invalidFiles: string[] = [];
-    const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
-    const SUPPORTED_TYPES = ['video/', 'audio/', 'image/'];
+    if (!files) return;
 
     for (const file of Array.from(files)) {
-      // File size validation
-      if (file.size > MAX_FILE_SIZE) {
-        invalidFiles.push(`${file.name} (file too large: ${Math.round(file.size / 1024 / 1024)}MB)`);
-        continue;
-      }
-
-      // File type validation
-      const isSupported = SUPPORTED_TYPES.some(type => file.type.startsWith(type));
-      if (!isSupported) {
-        invalidFiles.push(`${file.name} (unsupported type: ${file.type})`);
-        continue;
-      }
-
-      // File name validation (prevent problematic characters)
-      if (!/^[a-zA-Z0-9\-_\s\.\(\)]+$/.test(file.name)) {
-        invalidFiles.push(`${file.name} (invalid characters in filename)`);
-        continue;
-      }
-
-      validFiles.push(file);
-    }
-
-    // Show validation results
-    if (invalidFiles.length > 0) {
-      toast.error(`Skipped ${invalidFiles.length} invalid file${invalidFiles.length !== 1 ? 's' : ''}: ${invalidFiles.slice(0, 3).join(', ')}${invalidFiles.length > 3 ? '...' : ''}`);
-    }
-
-    if (validFiles.length === 0) {
-      console.warn('🚫 No valid files to upload');
-      return;
-    }
-
-    setIsUploading(true);
-    let successCount = 0;
-    let errorCount = 0;
-    const uploadErrors: string[] = [];
-
-    console.log(`📤 Starting batch upload of ${validFiles.length} valid file${validFiles.length !== 1 ? 's' : ''}`);
-
-    for (const file of validFiles) {
       try {
-        toast.info(`Uploading ${file.name}...`);
+        const url = URL.createObjectURL(file);
+        const type = detectFileType(file);
+        
+        if (type === "unknown") {
+          console.warn(`Unsupported file type: ${file.name}`);
+          continue;
+        }
 
-        const result = await MediaAssetService.uploadMediaAsset(file, {
-          onProgress: (progress: number) => {
-            // Production-grade progress tracking
-            console.log(`📊 Upload progress for ${file.name}: ${Math.round(progress)}%`);
-          },
-          onStatusChange: (status: string) => {
-            console.log(`📋 Upload status for ${file.name}: ${status}`);
+        let duration: number | undefined = undefined;
+        let metadata: any = {
+          size: file.size,
+        };
+
+        // Get actual metadata based on file type
+        try {
+          if (type === "video") {
+            const videoMeta = await getVideoMetadata(url);
+            duration = videoMeta.duration;
+            metadata = {
+              ...metadata,
+              width: videoMeta.width,
+              height: videoMeta.height,
+              fps: videoMeta.fps,
+            };
+          } else if (type === "audio") {
+            duration = await getMediaDuration(url, "audio");
+          } else if (type === "image") {
+            duration = 5; // Default 5 seconds for images
+            const imageDims = await getImageDimensions(url);
+            metadata = {
+              ...metadata,
+              width: imageDims.width,
+              height: imageDims.height,
+            };
           }
+        } catch (metaError) {
+          console.warn(`Could not extract metadata for ${file.name}:`, metaError);
+          // Use defaults
+          duration = type === "image" ? 5 : 10;
+        }
+
+        // Create asset in UserAsset format and save to database
+        await addMediaAsset({
+          user_id: '', // Will be set by the store
+          title: file.name,
+          description: '',
+          tags: [],
+          r2_object_key: url, // Temporary - will be replaced with actual R2 key
+          file_name: file.name,
+          content_type: file.type,
+          file_size_bytes: file.size,
+          source_studio: 'video-studio',
+          duration_seconds: duration,
+          dimensions: metadata.width && metadata.height ? {
+            width: metadata.width,
+            height: metadata.height
+          } : undefined,
+          video_metadata: type === 'video' ? {
+            fps: metadata.fps || 30,
+            bitrate: '0',
+            codec: 'unknown'
+          } : undefined,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
         });
 
-        if (result.success && result.asset) {
-          // Add the asset to the project store (with duplicate prevention)
-          addMediaAsset(result.asset);
-          successCount++;
-          console.log(`✅ Successfully uploaded: ${file.name}`);
-          toast.success(`${file.name} uploaded successfully!`);
-        } else {
-          errorCount++;
-          const errorMsg = result.error || 'Unknown upload error';
-          uploadErrors.push(`${file.name}: ${errorMsg}`);
-          console.error(`❌ Upload failed for ${file.name}:`, errorMsg);
-          toast.error(`Failed to upload ${file.name}: ${errorMsg}`);
-        }
+        console.log(`File uploaded: ${file.name} (${type}) - ${duration}s`);
       } catch (error) {
-        errorCount++;
-        const errorMsg = error instanceof Error ? error.message : 'Unknown error';
-        uploadErrors.push(`${file.name}: ${errorMsg}`);
-        console.error(`❌ Exception during upload of ${file.name}:`, error);
-        toast.error(`Failed to upload ${file.name}: ${errorMsg}`);
+        console.error("Error uploading file:", error);
       }
     }
 
-    // Production-grade summary reporting
-    console.log(`📊 Upload batch completed: ${successCount} success, ${errorCount} failed`);
-    
-    if (successCount > 0) {
-      toast.success(`✅ Successfully uploaded ${successCount} file${successCount !== 1 ? 's' : ''}`);
-    }
-    
-    if (errorCount > 0) {
-      console.error('❌ Upload errors:', uploadErrors);
-      toast.error(`❌ Failed to upload ${errorCount} file${errorCount !== 1 ? 's' : ''}`);
-    }
-
-    setIsUploading(false);
-    
-    // Clear the input to allow re-uploading the same files if needed
+    // Clear the input so the same file can be uploaded again
     e.target.value = "";
   };
 
   const handleDragStart = (e: React.DragEvent, asset: any) => {
-    try {
-      // Production-grade validation before drag operation
-      if (!asset || !asset.id) {
-        console.error('🚫 Cannot drag invalid asset:', asset);
-        e.preventDefault();
-        toast.error('Cannot drag this asset - invalid data');
-        return;
-      }
-
-      const dragData = { assetId: asset.id };
-      e.dataTransfer.setData("application/json", JSON.stringify(dragData));
-      e.dataTransfer.effectAllowed = "copy";
-      
-      console.log('🎬 Started dragging asset:', asset.file_name || asset.title || asset.id);
-    } catch (error) {
-      console.error('❌ Error starting drag operation:', error);
-      e.preventDefault();
-      toast.error('Failed to start drag operation');
-    }
+    e.dataTransfer.setData("application/json", JSON.stringify({ assetId: asset.id }));
+    e.dataTransfer.effectAllowed = "copy";
   };
 
   const MediaItem = ({ asset }: { asset: any }) => {
-    // Production-grade validation for asset data integrity
-    if (!asset) {
-      console.error('🚫 MediaItem received null/undefined asset');
-      return (
-        <div className="bg-red-900 rounded-lg p-2 text-center">
-          <p className="text-xs text-red-300">Invalid Asset</p>
-        </div>
-      );
-    }
-
-    if (!asset.id) {
-      console.error('🚫 MediaItem received asset without ID:', asset);
-      return (
-        <div className="bg-yellow-900 rounded-lg p-2 text-center">
-          <p className="text-xs text-yellow-300">Missing Asset ID</p>
-        </div>
-      );
-    }
-
-    let mediaInfo;
-    try {
-      mediaInfo = getMediaInfo(asset);
-    } catch (error) {
-      console.error('❌ Error extracting media info for asset:', asset.id, error);
-      return (
-        <div className="bg-red-900 rounded-lg p-2 text-center">
-          <p className="text-xs text-red-300">Corrupted Asset Data</p>
-          <p className="text-xs text-red-400 mt-1">{asset.file_name || 'Unknown File'}</p>
-        </div>
-      );
-    }
-
-    const { url: resolvedUrl, isLoading: isLoadingUrl } = useResolvedMediaUrl(mediaInfo.url);
+    const mediaInfo = getMediaInfo(asset);
     
     const getIcon = () => {
       switch (mediaInfo.type) {
@@ -239,15 +160,11 @@ export function MediaPanel() {
           {/* Thumbnail */}
           <div className="aspect-video bg-zinc-800 rounded-md mb-2 flex items-center justify-center overflow-hidden">
             {mediaInfo.type === "image" ? (
-              isLoadingUrl ? (
-                <div className="w-4 h-4 border-2 border-zinc-600 border-t-transparent rounded-full animate-spin" />
-              ) : (
               <img 
-                  src={resolvedUrl} 
+                src={mediaInfo.url} 
                 alt={mediaInfo.name}
                 className="w-full h-full object-cover"
               />
-              )
             ) : (
               <div className={cn("flex flex-col items-center gap-1", getTypeColor())}>
                 {getIcon()}
@@ -356,10 +273,9 @@ export function MediaPanel() {
                   size="sm"
                   className="text-zinc-400 hover:text-white h-7 px-2 text-xs"
                   onClick={() => document.getElementById('media-file-input')?.click()}
-                  disabled={isUploading}
                 >
                   <Plus className="w-3 h-3 mr-1" />
-                  {isUploading ? "Uploading..." : "Add"}
+                  Add
                 </Button>
               </div>
             </div>
@@ -408,16 +324,9 @@ export function MediaPanel() {
                 "gap-3",
                 viewMode === "grid" ? "grid grid-cols-2" : "space-y-1"
               )}>
-                {filteredAssets.map((asset: any, index: number) => {
-                  // Production-grade unique key generation to prevent React key conflicts
-                  const uniqueKey = asset.id ? 
-                    `asset-${asset.id}` : 
-                    `asset-${asset.local_asset_id || asset.r2_object_key || asset.file_name}-${index}-${asset.file_size_bytes}`;
-                  
-                  return (
-                    <MediaItem key={uniqueKey} asset={asset} />
-                  );
-                })}
+                {filteredAssets.map((asset) => (
+                  <MediaItem key={asset.id} asset={asset} />
+                ))}
               </div>
             )}
           </ScrollArea>
@@ -425,7 +334,7 @@ export function MediaPanel() {
           {/* Stats */}
           <div className="p-4 border-t border-zinc-800 text-xs text-zinc-500">
             {filteredAssets.length} asset{filteredAssets.length !== 1 ? 's' : ''}
-            {searchQuery && ` (filtered from ${mediaAssets.length})`}
+            {searchQuery && ` (filtered from ${project.mediaAssets.length})`}
           </div>
 
           {/* Hidden file input */}

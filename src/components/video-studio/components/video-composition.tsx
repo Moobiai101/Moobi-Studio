@@ -9,162 +9,23 @@ import {
   useVideoConfig,
   Sequence 
 } from "remotion";
-import React, { useMemo } from "react";
-import { getMediaInfo, EnhancedTimelineTrack, EnhancedTimelineClip } from "../store/video-project-store";
-import { VideoEditorProject, UserAsset } from "@/types/database";
-import { useResolvedMediaUrl } from "@/lib/video/media-url-resolver";
-
-// Production-grade URL resolution hook for multiple URLs
-const useResolvedMediaUrls = (urls: string[]) => {
-  const resolvedUrls = useMemo(() => {
-    const urlMap = new Map<string, { url: string; isLoading: boolean; error: Error | null }>();
-    
-    urls.forEach(url => {
-      urlMap.set(url, { url, isLoading: false, error: null });
-    });
-    
-    return urlMap;
-  }, [urls]);
-  
-  // For now, return the same pattern as single URL resolution
-  // In production, this would batch resolve all URLs
-  return resolvedUrls;
-};
-
-// Enhanced Video component with URL resolution
-const ResolvedVideo: React.FC<{
-  src: string;
-  startFrom?: number;
-  endAt?: number;
-  volume?: number;
-  style?: React.CSSProperties;
-  onError?: (error: any) => void;
-}> = ({ src, startFrom, endAt, volume = 0, style, onError }) => {
-  const { url: resolvedUrl, isLoading, error } = useResolvedMediaUrl(src);
-  
-  // Don't render while resolving or if there's an error
-  if (isLoading) {
-    return (
-      <div style={{ 
-        ...style, 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        backgroundColor: '#1e40af',
-        color: 'white',
-        fontSize: '12px'
-      }}>
-        Loading...
-      </div>
-    );
-  }
-  
-  if (error || !resolvedUrl) {
-    console.error('Video URL resolution error:', error);
-    onError?.(error);
-    return (
-      <div style={{ 
-        ...style, 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        backgroundColor: '#dc2626',
-        color: 'white',
-        fontSize: '12px'
-      }}>
-        {error ? 'Video Error' : 'No Video URL'}
-      </div>
-    );
-  }
-  
-  return (
-    <Video
-      src={resolvedUrl}
-      startFrom={startFrom}
-      endAt={endAt}
-      volume={volume}
-      style={style}
-      onError={onError}
-    />
-  );
-};
-
-// Enhanced Image component with URL resolution
-const ResolvedImg: React.FC<{
-  src: string;
-  style?: React.CSSProperties;
-  onError?: (error: any) => void;
-}> = ({ src, style, onError }) => {
-  const { url: resolvedUrl, isLoading, error } = useResolvedMediaUrl(src);
-  
-  // Don't render while resolving or if there's an error
-  if (isLoading) {
-    return (
-      <div style={{ 
-        ...style, 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        backgroundColor: '#6b7280',
-        color: 'white',
-        fontSize: '12px'
-      }}>
-        Loading...
-      </div>
-    );
-  }
-  
-  if (error || !resolvedUrl) {
-    console.error('Image URL resolution error:', error);
-    onError?.(error);
-    return (
-      <div style={{ 
-        ...style, 
-        display: 'flex', 
-        alignItems: 'center', 
-        justifyContent: 'center',
-        backgroundColor: '#dc2626',
-        color: 'white',
-        fontSize: '12px'
-      }}>
-        {error ? 'Image Error' : 'No Image URL'}
-      </div>
-    );
-  }
-  
-  return (
-    <Img
-      src={resolvedUrl}
-      style={style}
-      onError={onError}
-    />
-  );
-};
+import { VideoProject, TimelineClip, MediaAsset, getMediaInfo } from "../store/video-project-store";
 
 interface VideoCompositionProps {
-  project: {
-    project: VideoEditorProject | null;
-    tracks: EnhancedTimelineTrack[];
-    mediaAssets: UserAsset[];
-  };
+  project: VideoProject;
   currentTime?: number;
 }
 
 export const VideoComposition: React.FC<VideoCompositionProps> = ({
-  project: { project, tracks, mediaAssets },
+  project,
 }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Don't render if no project data
-  if (!project || !tracks || !mediaAssets) {
-    return <AbsoluteFill style={{ backgroundColor: "#000000" }} />;
-  }
-
   // Get tracks by type (sort overlay tracks by creation order for proper layering)
-  const videoTracks = tracks.filter(track => track.track_type === "video");
-  const overlayTracks = tracks.filter(track => track.track_type === "overlay");
-  const audioTracks = tracks.filter(track => track.track_type === "audio");
+  const videoTracks = project.tracks.filter(track => track.type === "video");
+  const overlayTracks = project.tracks.filter(track => track.type === "overlay");
+  const audioTracks = project.tracks.filter(track => track.type === "audio");
 
   // Note: All video elements are muted so Audio Engine can control audio
 
@@ -175,8 +36,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
         <VideoTrackSequence 
           key={track.id}
           track={track}
-          mediaAssets={mediaAssets}
-          fps={project.fps}
+          project={project}
           zIndex={10 + (videoTracks.length - trackIndex)}
         />
       ))}
@@ -186,8 +46,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
         <OverlayTrackSequence 
           key={track.id}
           track={track}
-          mediaAssets={mediaAssets}
-          fps={project.fps}
+          project={project}
           zIndex={100 + trackIndex} // Higher z-index for overlays
         />
       ))}
@@ -197,8 +56,7 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
         <AudioTrackSequence 
           key={track.id}
           track={track}
-          mediaAssets={mediaAssets}
-          fps={project.fps}
+          project={project}
         />
       ))} */}
     </AbsoluteFill>
@@ -207,28 +65,26 @@ export const VideoComposition: React.FC<VideoCompositionProps> = ({
 
 // Video track sequence renderer
 interface TrackSequenceProps {
-  track: EnhancedTimelineTrack;
-  mediaAssets: UserAsset[];
-  fps: number;
+  track: any;
+  project: VideoProject;
   zIndex?: number;
 }
 
 const VideoTrackSequence: React.FC<TrackSequenceProps> = ({ 
   track, 
-  mediaAssets, 
-  fps,
+  project, 
   zIndex = 0 
 }) => {
   return (
     <AbsoluteFill style={{ zIndex }}>
-      {track.clips.map((clip: EnhancedTimelineClip) => {
-        const asset = mediaAssets.find((a: UserAsset) => a.id === clip.asset_id);
+      {track.clips.map((clip: TimelineClip) => {
+        const asset = project.mediaAssets.find((a: MediaAsset) => a.id === clip.mediaId);
         if (!asset) return null;
 
         const mediaInfo = getMediaInfo(asset);
-        const startFrame = Math.floor(clip.start_time * fps);
-        const clipDuration = clip.end_time - clip.start_time;
-        const durationInFrames = Math.floor(clipDuration * fps);
+        const startFrame = Math.floor(clip.startTime * project.fps);
+        const clipDuration = clip.endTime - clip.startTime;
+        const durationInFrames = Math.floor(clipDuration * project.fps);
 
         return (
           <Sequence
@@ -238,9 +94,9 @@ const VideoTrackSequence: React.FC<TrackSequenceProps> = ({
             premountFor={30} // Premount 1 second for smooth playback
           >
             {mediaInfo.type === "video" ? (
-              <VideoClipRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} fps={fps} />
+              <VideoClipRenderer mediaInfo={mediaInfo} clip={clip} />
             ) : mediaInfo.type === "image" ? (
-              <ImageClipRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} fps={fps} />
+              <ImageClipRenderer mediaInfo={mediaInfo} clip={clip} />
             ) : null}
           </Sequence>
         );
@@ -252,24 +108,19 @@ const VideoTrackSequence: React.FC<TrackSequenceProps> = ({
 // Overlay track sequence renderer (for professional overlay compositing)
 const OverlayTrackSequence: React.FC<TrackSequenceProps> = ({ 
   track, 
-  mediaAssets, 
-  fps,
+  project, 
   zIndex = 100 
 }) => {
   return (
-    <AbsoluteFill style={{ 
-      zIndex, 
-      mixBlendMode: (track.blend_mode as any) || 'normal', 
-      opacity: track.opacity || 1 
-    }}>
-      {track.clips.map((clip: EnhancedTimelineClip) => {
-        const asset = mediaAssets.find((a: UserAsset) => a.id === clip.asset_id);
+    <AbsoluteFill style={{ zIndex, mixBlendMode: track.blendMode || 'normal', opacity: track.opacity || 1 }}>
+      {track.clips.map((clip: TimelineClip) => {
+        const asset = project.mediaAssets.find((a: MediaAsset) => a.id === clip.mediaId);
         if (!asset) return null;
 
         const mediaInfo = getMediaInfo(asset);
-        const startFrame = Math.floor(clip.start_time * fps);
-        const clipDuration = clip.end_time - clip.start_time;
-        const durationInFrames = Math.floor(clipDuration * fps);
+        const startFrame = Math.floor(clip.startTime * project.fps);
+        const clipDuration = clip.endTime - clip.startTime;
+        const durationInFrames = Math.floor(clipDuration * project.fps);
 
         return (
           <Sequence
@@ -279,9 +130,9 @@ const OverlayTrackSequence: React.FC<TrackSequenceProps> = ({
             premountFor={30}
           >
             {mediaInfo.type === "video" ? (
-              <OverlayVideoRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} track={track} fps={fps} />
+              <OverlayVideoRenderer mediaInfo={mediaInfo} clip={clip} track={track} />
             ) : mediaInfo.type === "image" ? (
-              <OverlayImageRenderer asset={asset} mediaInfo={mediaInfo} clip={clip} track={track} fps={fps} />
+              <OverlayImageRenderer mediaInfo={mediaInfo} clip={clip} track={track} />
             ) : null}
           </Sequence>
         );
@@ -294,19 +145,17 @@ const OverlayTrackSequence: React.FC<TrackSequenceProps> = ({
 /* 
 const AudioTrackSequence: React.FC<TrackSequenceProps> = ({ 
   track, 
-  mediaAssets,
-  fps
+  project 
 }) => {
   return (
     <>
-      {track.clips.map((clip: EnhancedTimelineClip) => {
-        const asset = mediaAssets.find((a: UserAsset) => a.id === clip.asset_id);
-        if (!asset || !asset.content_type.startsWith('audio/')) return null;
+      {track.clips.map((clip: TimelineClip) => {
+        const asset = project.mediaAssets.find((a: MediaAsset) => a.id === clip.mediaId);
+        if (!asset || asset.type !== "audio") return null;
 
-        const mediaInfo = getMediaInfo(asset);
-        const startFrame = Math.floor(clip.start_time * fps);
-        const clipDuration = clip.end_time - clip.start_time;
-        const durationInFrames = Math.floor(clipDuration * fps);
+        const startFrame = Math.floor(clip.startTime * project.fps);
+        const clipDuration = clip.endTime - clip.startTime;
+        const durationInFrames = Math.floor(clipDuration * project.fps);
 
         return (
           <Sequence
@@ -316,10 +165,10 @@ const AudioTrackSequence: React.FC<TrackSequenceProps> = ({
             premountFor={30}
           >
             <Audio
-              src={mediaInfo.url}
-              volume={clip.volume || 1}
-              startFrom={Math.floor((clip.trim_start || 0) * fps)}
-              endAt={Math.floor((clip.trim_end || clipDuration) * fps)}
+              src={asset.url}
+              volume={clip.volume}
+              startFrom={Math.floor(clip.trimStart * project.fps)}
+              endAt={Math.floor(clip.trimEnd * project.fps)}
             />
           </Sequence>
         );
@@ -331,45 +180,43 @@ const AudioTrackSequence: React.FC<TrackSequenceProps> = ({
 
 // Individual clip renderers
 const VideoClipRenderer: React.FC<{
-  asset: UserAsset;
   mediaInfo: ReturnType<typeof getMediaInfo>;
-  clip: EnhancedTimelineClip;
-  fps: number;
-}> = ({ asset, mediaInfo, clip, fps }) => {
+  clip: TimelineClip;
+}> = ({ mediaInfo, clip }) => {
   return (
-    <ResolvedVideo
+    <Video
       src={mediaInfo.url}
-      startFrom={Math.floor((clip.trim_start || 0) * fps)}
-      endAt={Math.floor((clip.trim_end || (clip.end_time - clip.start_time)) * fps)}
+      startFrom={Math.floor(clip.trimStart * 30)} // TODO: Use proper FPS from project
+      endAt={Math.floor(clip.trimEnd * 30)}
       volume={0} // Muted - Audio Engine handles all audio
       style={{
         width: "100%",
         height: "100%",
         objectFit: "contain",
       }}
+      // Add error handling and loading states
       onError={(error) => {
-        console.error("Video loading error for clip:", clip.id, error);
+        console.error("Video loading error:", error);
       }}
     />
   );
 };
 
 const ImageClipRenderer: React.FC<{
-  asset: UserAsset;
   mediaInfo: ReturnType<typeof getMediaInfo>;
-  clip: EnhancedTimelineClip;
-  fps: number;
-}> = ({ asset, mediaInfo, clip, fps }) => {
+  clip: TimelineClip;
+}> = ({ mediaInfo, clip }) => {
   return (
-    <ResolvedImg
+    <Img
       src={mediaInfo.url}
       style={{
         width: "100%",
         height: "100%",
         objectFit: "contain",
       }}
+      // Add error handling
       onError={(error) => {
-        console.error("Image loading error for clip:", clip.id, error);
+        console.error("Image loading error:", error);
       }}
     />
   );
@@ -377,12 +224,10 @@ const ImageClipRenderer: React.FC<{
 
 // Overlay renderers (with professional compositing support and transform data)
 const OverlayVideoRenderer: React.FC<{
-  asset: UserAsset;
   mediaInfo: ReturnType<typeof getMediaInfo>;
-  clip: EnhancedTimelineClip;
-  track: EnhancedTimelineTrack;
-  fps: number;
-}> = ({ asset, mediaInfo, clip, track, fps }) => {
+  clip: TimelineClip;
+  track: any;
+}> = ({ mediaInfo, clip, track }) => {
   // Get transform data from clip with proper defaults
   const defaultTransform = {
     position: { x: 0, y: 0 },
@@ -391,25 +236,13 @@ const OverlayVideoRenderer: React.FC<{
     opacity: 1
   };
   
-  // Extract transform data safely from clip.transform_data or overlayTransform
-  let transform = defaultTransform;
-  if (clip.transform_data && typeof clip.transform_data === 'object') {
-    const transformData = clip.transform_data as any;
-    transform = {
-      position: transformData.position || defaultTransform.position,
-      scale: transformData.scale || defaultTransform.scale,
-      rotation: transformData.rotation ?? defaultTransform.rotation,
-      opacity: transformData.opacity ?? defaultTransform.opacity
-    };
-  } else if ((clip as any).overlayTransform) {
-    const clipTransform = (clip as any).overlayTransform;
-    transform = {
-      position: clipTransform.position || defaultTransform.position,
-      scale: clipTransform.scale || defaultTransform.scale,
-      rotation: clipTransform.rotation ?? defaultTransform.rotation,
-      opacity: clipTransform.opacity ?? defaultTransform.opacity
-    };
-  }
+  const clipTransform = (clip as any).overlayTransform || {};
+  const transform = {
+    position: clipTransform.position || defaultTransform.position,
+    scale: clipTransform.scale || defaultTransform.scale,
+    rotation: clipTransform.rotation ?? defaultTransform.rotation,
+    opacity: clipTransform.opacity ?? defaultTransform.opacity
+  };
 
   const aspectRatio = mediaInfo.metadata?.width && mediaInfo.metadata?.height 
     ? mediaInfo.metadata.width / mediaInfo.metadata.height 
@@ -430,7 +263,7 @@ const OverlayVideoRenderer: React.FC<{
     width: '50%', // Default overlay size
     aspectRatio: `${aspectRatio}`,
     opacity: (track.opacity || 1) * transform.opacity,
-    mixBlendMode: (track.blend_mode as any) || 'normal',
+    mixBlendMode: track.blendMode || 'normal',
     transform: `translate(${transform.position.x}px, ${transform.position.y}px) scale(${transform.scale.x}, ${transform.scale.y}) rotate(${transform.rotation}deg)`,
     transformOrigin: 'center center',
     pointerEvents: 'auto'
@@ -444,10 +277,10 @@ const OverlayVideoRenderer: React.FC<{
         className="video-overlay-element"
         onClick={(e) => e.stopPropagation()}
       >
-        <ResolvedVideo
+        <Video
           src={mediaInfo.url}
-          startFrom={Math.floor((clip.trim_start || 0) * fps)}
-          endAt={Math.floor((clip.trim_end || (clip.end_time - clip.start_time)) * fps)}
+          startFrom={Math.floor(clip.trimStart * 30)}
+          endAt={Math.floor(clip.trimEnd * 30)}
           volume={0} // Muted - Audio Engine handles all audio
           style={{
             width: "100%",
@@ -455,7 +288,7 @@ const OverlayVideoRenderer: React.FC<{
             objectFit: "contain",
           }}
           onError={(error) => {
-            console.error("Overlay video loading error for clip:", clip.id, error);
+            console.error("Overlay video loading error:", error);
           }}
         />
       </div>
@@ -464,12 +297,10 @@ const OverlayVideoRenderer: React.FC<{
 };
 
 const OverlayImageRenderer: React.FC<{
-  asset: UserAsset;
   mediaInfo: ReturnType<typeof getMediaInfo>;
-  clip: EnhancedTimelineClip;
-  track: EnhancedTimelineTrack;
-  fps: number;
-}> = ({ asset, mediaInfo, clip, track, fps }) => {
+  clip: TimelineClip;
+  track: any;
+}> = ({ mediaInfo, clip, track }) => {
   // Get transform data from clip with proper defaults
   const defaultTransform = {
     position: { x: 0, y: 0 },
@@ -478,25 +309,13 @@ const OverlayImageRenderer: React.FC<{
     opacity: 1
   };
   
-  // Extract transform data safely from clip.transform_data or overlayTransform
-  let transform = defaultTransform;
-  if (clip.transform_data && typeof clip.transform_data === 'object') {
-    const transformData = clip.transform_data as any;
-    transform = {
-      position: transformData.position || defaultTransform.position,
-      scale: transformData.scale || defaultTransform.scale,
-      rotation: transformData.rotation ?? defaultTransform.rotation,
-      opacity: transformData.opacity ?? defaultTransform.opacity
-    };
-  } else if ((clip as any).overlayTransform) {
-    const clipTransform = (clip as any).overlayTransform;
-    transform = {
-      position: clipTransform.position || defaultTransform.position,
-      scale: clipTransform.scale || defaultTransform.scale,
-      rotation: clipTransform.rotation ?? defaultTransform.rotation,
-      opacity: clipTransform.opacity ?? defaultTransform.opacity
-    };
-  }
+  const clipTransform = (clip as any).overlayTransform || {};
+  const transform = {
+    position: clipTransform.position || defaultTransform.position,
+    scale: clipTransform.scale || defaultTransform.scale,
+    rotation: clipTransform.rotation ?? defaultTransform.rotation,
+    opacity: clipTransform.opacity ?? defaultTransform.opacity
+  };
 
   const aspectRatio = mediaInfo.metadata?.width && mediaInfo.metadata?.height
     ? mediaInfo.metadata.width / mediaInfo.metadata.height
@@ -517,7 +336,7 @@ const OverlayImageRenderer: React.FC<{
     width: '50%', // Default overlay size
     aspectRatio: `${aspectRatio}`,
     opacity: (track.opacity || 1) * transform.opacity,
-    mixBlendMode: (track.blend_mode as any) || 'normal',
+    mixBlendMode: track.blendMode || 'normal',
     transform: `translate(${transform.position.x}px, ${transform.position.y}px) scale(${transform.scale.x}, ${transform.scale.y}) rotate(${transform.rotation}deg)`,
     transformOrigin: 'center center',
     pointerEvents: 'auto'
@@ -531,7 +350,7 @@ const OverlayImageRenderer: React.FC<{
         className="video-overlay-element"
         onClick={(e) => e.stopPropagation()}
       >
-        <ResolvedImg
+        <Img
           src={mediaInfo.url}
           style={{
             width: "100%",
@@ -539,7 +358,7 @@ const OverlayImageRenderer: React.FC<{
             objectFit: "contain",
           }}
           onError={(error) => {
-            console.error("Overlay image loading error for clip:", clip.id, error);
+            console.error("Overlay image loading error:", error);
           }}
         />
       </div>

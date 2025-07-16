@@ -102,7 +102,7 @@ export function VideoTransformControls({
   // Memoize active overlays to prevent recreating on every render
   const activeOverlays = useMemo(() => 
     overlays.filter(overlay => 
-      currentTime >= overlay.start_time && currentTime <= overlay.end_time
+    currentTime >= overlay.startTime && currentTime <= overlay.endTime
     ),
     [overlays, currentTime]
   );
@@ -115,14 +115,7 @@ export function VideoTransformControls({
     const overlay = overlays.find(o => o.id === selectedOverlayId);
     if (!overlay) return;
     
-    // Get transform from database transform_data or overlayTransform (legacy)
-    let transform: any = {};
-    if (overlay.transform_data && typeof overlay.transform_data === 'object') {
-      transform = overlay.transform_data;
-    } else if (overlay.overlayTransform) {
-      transform = overlay.overlayTransform;
-    }
-    
+    const transform = overlay.overlayTransform || {};
     const newFrame = {
       translate: [transform.position?.x || 0, transform.position?.y || 0] as [number, number],
       rotate: transform.rotation || 0,

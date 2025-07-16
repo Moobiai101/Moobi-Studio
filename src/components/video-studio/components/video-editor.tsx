@@ -44,7 +44,6 @@ import { OverlayControls } from "./overlay-controls";
 export function VideoEditor() {
   const {
     project,
-    tracks,
     currentTime,
     isPlaying,
     setIsPlaying,
@@ -52,33 +51,18 @@ export function VideoEditor() {
     selectedClipId,
     addMediaAsset,
     saveProject,
-    importMedia,
   } = useVideoProject();
 
   const [showExportDialog, setShowExportDialog] = useState(false);
   const [activeTool, setActiveTool] = useState<string>("select");
   const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
-  const [projectName, setProjectName] = useState(project?.title || '');
+  const [projectName, setProjectName] = useState(project.name);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // Helper to safely get resolution
-  const getResolution = () => {
-    if (!project?.resolution || typeof project.resolution !== 'object') {
-      return { width: 1920, height: 1080 };
-    }
-    const res = project.resolution as any;
-    return {
-      width: typeof res.width === 'number' ? res.width : 1920,
-      height: typeof res.height === 'number' ? res.height : 1080
-    };
-  };
 
   // Sync project name with local state
   useEffect(() => {
-    if (project?.title) {
-      setProjectName(project.title);
-    }
-  }, [project?.title]);
+    setProjectName(project.name);
+  }, [project.name]);
 
   // Auto-collapse panel on smaller screens
   useEffect(() => {
@@ -108,10 +92,45 @@ export function VideoEditor() {
   };
 
   const handleFileUpload = async (files: FileList) => {
-    // Use the importMedia action from the store which handles MediaAssetService properly
-    const filesArray = Array.from(files);
-    if (importMedia) {
-      await importMedia(filesArray);
+    for (const file of Array.from(files)) {
+      try {
+        const url = URL.createObjectURL(file);
+        
+        // Determine content type and duration
+        let duration_seconds: number | undefined;
+        if (file.type.startsWith("image/")) {
+          duration_seconds = 5; // Default duration for images
+        }
+
+        addMediaAsset({
+          user_id: '', // Will be set by the addMediaAsset function
+          title: file.name,
+          description: '',
+          tags: [],
+          r2_object_key: url, // Temporary - will be replaced with R2 key
+          file_name: file.name,
+          content_type: file.type,
+          file_size_bytes: file.size,
+          source_studio: 'video-studio',
+          duration_seconds,
+          dimensions: undefined, // Will be set after metadata extraction
+          video_metadata: undefined, // Will be set for video files
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        toast({
+          title: "File uploaded",
+          description: `${file.name} has been added to your project`,
+        });
+      } catch (error) {
+        console.error("Error uploading file:", error);
+        toast({
+          title: "Upload failed",
+          description: "Failed to upload file. Please try again.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
@@ -126,23 +145,10 @@ export function VideoEditor() {
     { id: "effects", icon: Wand2, label: "Effects" },
   ];
 
-  // Find selected clip from tracks
-  const selectedClip = tracks
-    .flatMap((track: any) => track.clips)
-    .find((clip: any) => clip.id === selectedClipId);
-
-  const resolution = getResolution();
-
-  if (!project) {
-    return (
-      <div className="h-screen w-full bg-zinc-950 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-zinc-400">Loading project...</p>
-        </div>
-      </div>
-    );
-  }
+  // Find selected clip
+  const selectedClip = project.tracks
+    .flatMap(track => track.clips)
+    .find(clip => clip.id === selectedClipId);
 
   return (
     <div className="h-screen w-full bg-zinc-950 flex flex-col">
@@ -251,7 +257,7 @@ export function VideoEditor() {
             
             {/* Resolution Info */}
             <div className="absolute top-4 right-4 bg-zinc-900/80 backdrop-blur-sm rounded px-2 py-1 text-xs text-zinc-300">
-              {resolution.width}×{resolution.height} • {project.fps}fps
+              {project.resolution.width}×{project.resolution.height} • {project.fps}fps
             </div>
           </div>
 

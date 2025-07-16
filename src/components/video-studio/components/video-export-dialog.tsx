@@ -26,37 +26,17 @@ interface VideoExportDialogProps {
 export function VideoExportDialog({ open, onOpenChange }: VideoExportDialogProps) {
   const { project } = useVideoProject();
   
-  // Helper to safely get resolution
-  const getResolution = () => {
-    if (!project?.resolution || typeof project.resolution !== 'object') {
-      return { width: 1920, height: 1080 };
-    }
-    const res = project.resolution as any;
-    return {
-      width: typeof res.width === 'number' ? res.width : 1920,
-      height: typeof res.height === 'number' ? res.height : 1080
-    };
-  };
-
-  // Helper to safely get project duration
-  const getProjectDuration = () => {
-    return project?.duration_seconds || 30; // Default 30 seconds if not available
-  };
-
-  const resolution = getResolution();
-  const projectDuration = getProjectDuration();
-  
   const [exportSettings, setExportSettings] = useState({
     format: "mp4",
     quality: "high",
-    resolution: `${resolution.width}x${resolution.height}`,
-    fps: project?.fps || 30,
+    resolution: `${project.resolution.width}x${project.resolution.height}`,
+    fps: project.fps,
     bitrate: "auto",
     codec: "h264",
     audioCodec: "aac",
     audioBitrate: "128",
     includeAudio: true,
-    filename: (project?.title || 'untitled').replace(/\s+/g, "_").toLowerCase(),
+    filename: project.name.replace(/\s+/g, "_").toLowerCase(),
   });
 
   const [isExporting, setIsExporting] = useState(false);
@@ -146,18 +126,13 @@ export function VideoExportDialog({ open, onOpenChange }: VideoExportDialogProps
     if (!quality) return "Unknown";
     
     const bitrate = parseInt(quality.bitrate.replace("k", ""));
-    const sizeInMB = (bitrate * projectDuration) / 8 / 1000;
+    const sizeInMB = (bitrate * project.duration) / 8 / 1000;
     
     if (sizeInMB > 1000) {
       return `~${(sizeInMB / 1000).toFixed(1)} GB`;
     }
     return `~${sizeInMB.toFixed(0)} MB`;
   };
-
-  // Don't render if no project
-  if (!project) {
-    return null;
-  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -368,7 +343,7 @@ export function VideoExportDialog({ open, onOpenChange }: VideoExportDialogProps
             <div className="bg-muted rounded-lg p-4 space-y-2">
               <div className="flex items-center justify-between text-sm">
                 <span>Duration:</span>
-                <span>{Math.floor(projectDuration / 60)}:{(projectDuration % 60).toFixed(0).padStart(2, '0')}</span>
+                <span>{Math.floor(project.duration / 60)}:{(project.duration % 60).toFixed(0).padStart(2, '0')}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span>Estimated Size:</span>

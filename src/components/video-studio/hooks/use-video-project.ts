@@ -3,8 +3,6 @@ import { useVideoProjectStore } from "../providers/video-project-provider";
 export function useVideoProject() {
   // Project data
   const project = useVideoProjectStore((state) => state.project);
-  const tracks = useVideoProjectStore((state) => state.tracks);
-  const mediaAssets = useVideoProjectStore((state) => state.mediaAssets);
   
   // Playback state
   const currentTime = useVideoProjectStore((state) => state.currentTime);
@@ -36,7 +34,6 @@ export function useVideoProject() {
   const addMediaAsset = useVideoProjectStore((state) => state.addMediaAsset);
   const removeMediaAsset = useVideoProjectStore((state) => state.removeMediaAsset);
   const setSelectedMediaId = useVideoProjectStore((state) => state.setSelectedMediaId);
-  const importMedia = useVideoProjectStore((state) => state.importMedia);
   
   // Track management
   const addTrack = useVideoProjectStore((state) => state.addTrack);
@@ -72,8 +69,6 @@ export function useVideoProject() {
   return {
     // Project data
     project,
-    tracks,
-    mediaAssets,
     
     // Playback state
     currentTime,
@@ -105,7 +100,6 @@ export function useVideoProject() {
     addMediaAsset,
     removeMediaAsset,
     setSelectedMediaId,
-    importMedia,
     
     // Track management
     addTrack,

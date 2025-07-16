@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
-import { useResolvedMediaUrl } from "@/lib/video/media-url-resolver";
+import React, { useEffect, useRef, useState, useCallback } from "react";
 
 // Add CSS for timeline animations
 const timelineStyles = `
@@ -69,7 +68,6 @@ import {
 import { useVideoFilmstrips } from "../hooks/use-video-filmstrips";
 import { Slider } from "@/components/ui/slider";
 import { audioEngine } from "../lib/audio-engine";
-import { MediaAssetService } from "@/services/media-assets";
 
 // Video Clip Component with Filmstrip Support
 interface VideoClipProps {
@@ -98,50 +96,41 @@ function VideoClip({
   const filmstripsManager = useVideoFilmstripsContext();
   const [filmstripLoaded, setFilmstripLoaded] = useState(false);
   
-  // Production-grade URL resolution for IndexedDB URLs
-  const { url: resolvedUrl, isLoading: isResolvingUrl, error: urlError } = useResolvedMediaUrl(clip.asset.url);
-  
-  // Memoize optimalFrameCount to prevent infinite re-renders
-  const optimalFrameCount = useMemo(() => {
-    return Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
-  }, [clipWidth]);
+  // Calculate optimalFrameCount based on clipWidth (visual width on timeline)
+  // This determines how many frames we visually want to see for this clip.
+  const optimalFrameCount = Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
 
-  // Memoize filmstrip config to prevent unnecessary re-requests
-  const filmstripConfig = useMemo(() => ({
-    frameWidth: 96,  // 16:9 aspect ratio at 64px height
-    frameHeight: 64, // Fixed height like Premiere Pro
-    frameCount: optimalFrameCount,
-    quality: 0.95,    // High quality for sharp thumbnails
-    layout: 'horizontal' as const,
-    sourceStartTime: clip.trim_start, // Start time of the segment within the asset
-    sourceDuration: clip.trim_end - clip.trim_start // Duration of the segment from the asset
-  }), [optimalFrameCount, clip.trim_start, clip.trim_end]);
-
-  // Request filmstrip for video clips using professional editor standards with debouncing
+  // Request filmstrip for video clips using professional editor standards
   useEffect(() => {
-    if (clip.asset.type !== 'video' || !resolvedUrl || clipWidth <= 20 || isResolvingUrl || urlError) {
-      return;
-    }
-
-    // Debounce filmstrip requests to prevent excessive calls
-    const timeoutId = setTimeout(() => {
-      const clipDuration = clip.end_time - clip.start_time;
+    if (clip.asset.type === 'video' && clip.asset.url && clipWidth > 20) {
+      const clipDuration = clip.endTime - clip.startTime;
       
-      // Request filmstrip with resolved URL (production-grade approach)
+      // Professional approach: Fixed height, high quality, optimized frame count
+      const PROFESSIONAL_FRAME_HEIGHT = 64; // Fixed height like Premiere Pro
+      const PROFESSIONAL_FRAME_WIDTH = 96;  // 16:9 aspect ratio at 64px height
+      const PROFESSIONAL_QUALITY = 0.95;    // High quality for sharp thumbnails
+      
+      // Request filmstrip with professional settings
       filmstripsManager.requestFilmstrip(
         clip.id,
-        resolvedUrl, // Use resolved URL instead of original
-        clipDuration, // This is the display duration on the timeline
+        clip.asset.url,
+        clip.endTime - clip.startTime, // This is the display duration on the timeline
         clipWidth,
         {
           priority: isSelected ? 'high' : 'normal',
-          config: filmstripConfig
+          config: {
+            frameWidth: PROFESSIONAL_FRAME_WIDTH,
+            frameHeight: PROFESSIONAL_FRAME_HEIGHT,
+            frameCount: optimalFrameCount,
+            quality: PROFESSIONAL_QUALITY,
+            layout: 'horizontal',
+            sourceStartTime: clip.trimStart, // Start time of the segment within the asset
+            sourceDuration: clip.trimEnd - clip.trimStart // Duration of the segment from the asset
+          }
         }
       );
-    }, 100); // 100ms debounce
-
-    return () => clearTimeout(timeoutId);
-  }, [clip.id, resolvedUrl, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, filmstripsManager, filmstripConfig, isResolvingUrl, urlError]);
+    }
+  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.endTime, clip.startTime, clip.trimStart, clip.trimEnd, filmstripsManager, optimalFrameCount]);
   
   // Get filmstrip state
   const filmstrip = filmstripsManager.getFilmstrip(clip.id);
@@ -152,7 +141,7 @@ function VideoClip({
     setFilmstripLoaded(!!filmstrip);
   }, [filmstrip]);
   
-  // Calculate background styles for filmstrip with URL resolution handling
+  // Calculate background styles for filmstrip
   const backgroundStyles: React.CSSProperties = {};
   
   if (clip.asset.type === 'video' && filmstrip) {
@@ -164,25 +153,16 @@ function VideoClip({
     // Add image rendering for crisp display
     backgroundStyles.imageRendering = 'crisp-edges';
   } else if (clip.asset.type === 'video') {
-    // Loading or fallback state (including URL resolution)
-    const isLoading = isLoadingFilmstrip || isResolvingUrl;
-    const hasError = urlError;
-    
-    if (hasError) {
-      backgroundStyles.backgroundColor = '#dc2626'; // Red for errors
-      backgroundStyles.backgroundImage = 'linear-gradient(45deg, #dc2626 25%, #ef4444 25%, #ef4444 50%, #dc2626 50%, #dc2626 75%, #ef4444 75%)';
-      backgroundStyles.backgroundSize = '8px 8px';
-    } else {
-      backgroundStyles.backgroundColor = isLoading ? '#3b82f6' : '#1e40af';
-      backgroundStyles.backgroundImage = isLoading 
-        ? 'linear-gradient(90deg, #3b82f6 0%, #1d4ed8 50%, #3b82f6 100%)'
-        : undefined;
-      backgroundStyles.backgroundSize = isLoading ? '200% 100%' : undefined;
-      backgroundStyles.animation = isLoading ? 'shimmer 2s infinite linear' : undefined;
-    }
+    // Loading or fallback state
+    backgroundStyles.backgroundColor = isLoadingFilmstrip ? '#3b82f6' : '#1e40af';
+    backgroundStyles.backgroundImage = isLoadingFilmstrip 
+      ? 'linear-gradient(90deg, #3b82f6 0%, #1d4ed8 50%, #3b82f6 100%)'
+      : undefined;
+    backgroundStyles.backgroundSize = isLoadingFilmstrip ? '200% 100%' : undefined;
+    backgroundStyles.animation = isLoadingFilmstrip ? 'shimmer 2s infinite linear' : undefined;
   } else if (clip.asset.type === 'image') {
-    // Show actual image thumbnail with resolved URL
-    backgroundStyles.backgroundImage = `url(${resolvedUrl || clip.asset.url})`;
+    // Show actual image thumbnail with consistent sizing
+    backgroundStyles.backgroundImage = `url(${clip.asset.url})`;
     backgroundStyles.backgroundSize = 'auto 100%'; // Height fills clip, width maintains aspect ratio
     backgroundStyles.backgroundPosition = 'left center';
     backgroundStyles.backgroundRepeat = 'repeat-x'; // Repeat horizontally for long clips
@@ -221,19 +201,10 @@ function VideoClip({
           <div className="absolute inset-0 bg-purple-500/20 rounded"></div>
         )}
         
-        {/* Loading indicator for filmstrip and URL resolution */}
-        {clip.asset.type === 'video' && (isLoadingFilmstrip || isResolvingUrl) && !filmstrip && (
+        {/* Loading indicator for filmstrip */}
+        {clip.asset.type === 'video' && isLoadingFilmstrip && !filmstrip && (
           <div className="absolute inset-0 flex items-center justify-center bg-blue-600/20">
             <div className="w-3 h-3 border border-white/60 border-t-transparent rounded-full animate-spin"></div>
-          </div>
-        )}
-        
-        {/* Error indicator for URL resolution */}
-        {clip.asset.type === 'video' && urlError && (
-          <div className="absolute inset-0 flex items-center justify-center bg-red-600/20">
-            <div className="text-xs text-white/80 text-center px-1">
-              URL Error
-            </div>
           </div>
         )}
         
@@ -251,12 +222,12 @@ function VideoClip({
         {/* Clip name overlay for larger clips */}
         {clipWidth > 100 && (
           <div className="absolute bottom-1 left-1 right-1 text-xs text-white/80 truncate bg-black/40 px-1 rounded">
-            {clip.asset.title}
+            {clip.asset.name}
           </div>
         )}
         
         {/* Mute indicator */}
-        {clip.is_muted && (
+        {clip.muted && (
           <div className="absolute top-1 left-1 bg-red-600 text-white rounded px-1 text-xs flex items-center gap-1">
             <VolumeX className="w-2 h-2" />
             M
@@ -315,50 +286,40 @@ function OverlayClip({
   const filmstripsManager = useVideoFilmstripsContext();
   const [filmstripLoaded, setFilmstripLoaded] = useState(false);
   
-  // Production-grade URL resolution for IndexedDB URLs
-  const { url: resolvedUrl, isLoading: isResolvingUrl, error: urlError } = useResolvedMediaUrl(clip.asset.url);
-  
-  // Memoize optimalFrameCount to prevent infinite re-renders
-  const optimalFrameCount = useMemo(() => {
-    return Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
-  }, [clipWidth]);
+  // Calculate optimalFrameCount based on clipWidth (same as VideoClip)
+  const optimalFrameCount = Math.max(3, Math.min(100, Math.floor(clipWidth / 48)));
 
-  // Memoize filmstrip config to prevent unnecessary re-requests
-  const filmstripConfig = useMemo(() => ({
-    frameWidth: 96,  // 16:9 aspect ratio at 64px height
-    frameHeight: 64, // Fixed height like Premiere Pro
-    frameCount: optimalFrameCount,
-    quality: 0.95,    // High quality for sharp thumbnails
-    layout: 'horizontal' as const,
-    sourceStartTime: clip.trim_start, // Start time of the segment within the asset
-    sourceDuration: clip.trim_end - clip.trim_start // Duration of the segment from the asset
-  }), [optimalFrameCount, clip.trim_start, clip.trim_end]);
-
-  // Request filmstrip for video overlays using professional editor standards with debouncing
+  // Request filmstrip for video overlays using professional editor standards
   useEffect(() => {
-    if (clip.asset.type !== 'video' || !resolvedUrl || clipWidth <= 20 || isResolvingUrl || urlError) {
-      return;
-    }
-
-    // Debounce filmstrip requests to prevent excessive calls
-    const timeoutId = setTimeout(() => {
-      const clipDuration = clip.end_time - clip.start_time;
+    if (clip.asset.type === 'video' && clip.asset.url && clipWidth > 20) {
+      const clipDuration = clip.endTime - clip.startTime;
       
-      // Request filmstrip with resolved URL (production-grade approach)
+      // Professional approach: Fixed height, high quality, optimized frame count
+      const PROFESSIONAL_FRAME_HEIGHT = 64; // Fixed height like Premiere Pro
+      const PROFESSIONAL_FRAME_WIDTH = 96;  // 16:9 aspect ratio at 64px height
+      const PROFESSIONAL_QUALITY = 0.95;    // High quality for sharp thumbnails
+      
+      // Request filmstrip with professional settings
       filmstripsManager.requestFilmstrip(
         clip.id,
-        resolvedUrl, // Use resolved URL instead of original
-        clipDuration, // This is the display duration on the timeline
+        clip.asset.url,
+        clip.endTime - clip.startTime, // This is the display duration on the timeline
         clipWidth,
         {
           priority: isSelected ? 'high' : 'normal',
-          config: filmstripConfig
+          config: {
+            frameWidth: PROFESSIONAL_FRAME_WIDTH,
+            frameHeight: PROFESSIONAL_FRAME_HEIGHT,
+            frameCount: optimalFrameCount,
+            quality: PROFESSIONAL_QUALITY,
+            layout: 'horizontal',
+            sourceStartTime: clip.trimStart, // Start time of the segment within the asset
+            sourceDuration: clip.trimEnd - clip.trimStart // Duration of the segment from the asset
+          }
         }
       );
-    }, 100); // 100ms debounce
-
-    return () => clearTimeout(timeoutId);
-  }, [clip.id, resolvedUrl, clip.asset.type, clipWidth, isSelected, clip.end_time, clip.start_time, filmstripsManager, filmstripConfig, isResolvingUrl, urlError]);
+    }
+  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.endTime, clip.startTime, clip.trimStart, clip.trimEnd, filmstripsManager, optimalFrameCount]);
   
   // Get filmstrip state
   const filmstrip = filmstripsManager.getFilmstrip(clip.id);
@@ -369,8 +330,8 @@ function OverlayClip({
     setFilmstripLoaded(!!filmstrip);
   }, [filmstrip]);
 
-  const duration = clip.end_time - clip.start_time;
-  const trimDuration = clip.trim_end - clip.trim_start;
+  const duration = clip.endTime - clip.startTime;
+  const trimDuration = clip.trimEnd - clip.trimStart;
   const opacity = clip.track?.opacity || 1;
 
   // Calculate background styles for filmstrip (same approach as VideoClip)
@@ -447,7 +408,7 @@ function OverlayClip({
         {/* Clip name overlay for larger clips */}
         {clipWidth > 100 && (
           <div className="absolute bottom-1 left-1 right-1 text-xs text-white/80 truncate bg-black/40 px-1 rounded">
-            {clip.asset.title}
+            {clip.asset.name}
           </div>
         )}
         
@@ -468,7 +429,7 @@ function OverlayClip({
         )}
         
         {/* Mute indicator */}
-        {clip.is_muted && (
+        {clip.muted && (
           <div className="absolute top-1 left-1 bg-red-600 text-white rounded px-1 text-xs flex items-center gap-1">
             <VolumeX className="w-2 h-2" />
             M
@@ -551,7 +512,7 @@ function AudioClip({
         </div>
         
         {/* Mute indicator */}
-        {clip.is_muted && (
+        {clip.muted && (
           <div className="absolute top-1 left-1 bg-red-600 text-white rounded px-1 text-xs flex items-center gap-1">
             <VolumeX className="w-2 h-2" />
             M
@@ -573,8 +534,6 @@ function AudioClip({
 export function VideoTimeline() {
   const {
     project,
-    tracks,
-    mediaAssets,
     currentTime,
     setCurrentTime,
     selectedClipId,
@@ -646,9 +605,9 @@ export function VideoTimeline() {
   const getAllClips = () => {
     const allClips: any[] = [];
     
-    tracks.forEach((track: any) => {
-      track.clips.forEach((clip: any) => {
-        const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
+    project.tracks.forEach(track => {
+      track.clips.forEach(clip => {
+        const asset = project.mediaAssets.find(a => a.id === clip.mediaId);
         if (asset) {
           const mediaInfo = getMediaInfo(asset);
           allClips.push({
@@ -657,13 +616,13 @@ export function VideoTimeline() {
               ...asset,
               ...mediaInfo // Add extracted media info for compatibility
             },
-            trackType: track.track_type
+            trackType: track.type
           });
         }
       });
     });
     
-    return allClips.sort((a: any, b: any) => a.start_time - b.start_time);
+    return allClips.sort((a, b) => a.startTime - b.startTime);
   };
 
   // Group clips by track type
@@ -674,9 +633,9 @@ export function VideoTimeline() {
       audio: []
     };
     
-    tracks.forEach((track: any) => {
-      track.clips.forEach((clip: any) => {
-        const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
+    project.tracks.forEach(track => {
+      track.clips.forEach(clip => {
+        const asset = project.mediaAssets.find(a => a.id === clip.mediaId);
         if (asset) {
           const mediaInfo = getMediaInfo(asset);
           const clipWithAsset = {
@@ -685,14 +644,14 @@ export function VideoTimeline() {
               ...asset,
               ...mediaInfo // Add extracted media info for compatibility
             },
-            trackType: track.track_type,
+            trackType: track.type,
             trackId: track.id,
             track: track // Include track info for overlay properties
           };
           
-          if (track.track_type === 'audio') {
+          if (track.type === 'audio') {
             trackGroups.audio.push(clipWithAsset);
-          } else if (track.track_type === 'overlay') {
+          } else if (track.type === 'overlay') {
             trackGroups.overlay.push(clipWithAsset);
           } else {
             trackGroups.video.push(clipWithAsset);
@@ -702,7 +661,7 @@ export function VideoTimeline() {
     });
     
     Object.keys(trackGroups).forEach(key => {
-      trackGroups[key].sort((a: any, b: any) => a.start_time - b.start_time);
+      trackGroups[key].sort((a, b) => a.startTime - b.startTime);
     });
     
     return trackGroups;
@@ -715,9 +674,9 @@ export function VideoTimeline() {
   // Calculate total project duration
   const calculateProjectDuration = () => {
     let maxEndTime = 0;
-    tracks.forEach((track: any) => {
-      track.clips.forEach((clip: any) => {
-        maxEndTime = Math.max(maxEndTime, clip.end_time);
+    project.tracks.forEach(track => {
+      track.clips.forEach(clip => {
+        maxEndTime = Math.max(maxEndTime, clip.endTime);
       });
     });
     return Math.max(maxEndTime, 30); // Minimum 30 seconds for better UX
@@ -1063,42 +1022,25 @@ export function VideoTimeline() {
   useEffect(() => {
     const timelineClips = getAllClips();
     
-    // Add new audio tracks for video and audio clips with URL resolution
-    timelineClips.forEach(async (clip) => {
+    // Add new audio tracks for video and audio clips
+    timelineClips.forEach(clip => {
       if ((clip.asset.type === 'video' || clip.asset.type === 'audio')) {
         // Check if track already exists by trying to get its state
         const existingTrack = audioEngine.getTrackState(clip.id);
         
         if (!existingTrack) {
-          // Resolve IndexedDB URLs to blob URLs for audio engine
-          let resolvedUrl = clip.asset.url;
-          
-          if (clip.asset.url.startsWith('indexeddb://')) {
-            try {
-              // Use MediaUrlResolver to get blob URL
-              const { MediaUrlResolver } = await import('@/lib/video/media-url-resolver');
-              resolvedUrl = await MediaUrlResolver.resolveUrl(clip.asset.url);
-              console.log('🎵 Resolved audio URL:', clip.asset.url, '->', resolvedUrl);
-            } catch (error) {
-              console.error('❌ Failed to resolve audio URL:', clip.asset.url, error);
-              // Continue with original URL as fallback
-            }
-          }
-          
           audioEngine.addTrack(
             clip.id,
-            resolvedUrl, // Use resolved URL instead of raw IndexedDB URL
+            clip.asset.url,
             clip.startTime,
             clip.endTime,
             clip.trimStart,
             clip.trimEnd
-          ).then(() => {
-            // Apply current volume and mute state after track is successfully added
-            audioEngine.setTrackVolume(clip.id, clip.volume || 1);
-            audioEngine.setTrackMuted(clip.id, clip.muted || false);
-          }).catch(error => {
-            console.warn('Failed to add audio track:', error);
-          });
+          );
+          
+          // Apply current volume and mute state
+          audioEngine.setTrackVolume(clip.id, clip.volume || 1);
+          audioEngine.setTrackMuted(clip.id, clip.muted || false);
         }
       }
     });
@@ -1142,21 +1084,21 @@ export function VideoTimeline() {
 
     // Find the appropriate track
     const targetTrackType = asset.type === 'audio' ? 'audio' : 'video';
-    const targetTrack = tracks.find((t: any) => t.track_type === targetTrackType);
+    const targetTrack = project.tracks.find(t => t.type === targetTrackType);
     
     if (!targetTrack) {
       return dropPosition;
     }
 
     // Get clips in this track only
-    const trackClips = targetTrack.clips.sort((a: any, b: any) => a.start_time - b.start_time);
+    const trackClips = targetTrack.clips.sort((a, b) => a.startTime - b.startTime);
     
     // Find the first available position at or after the playhead
-    const clipsAfterPlayhead = trackClips.filter((clip: any) => clip.end_time > currentTime);
+    const clipsAfterPlayhead = trackClips.filter(clip => clip.endTime > currentTime);
     
     if (clipsAfterPlayhead.length === 0) {
       // No clips after playhead, place at playhead or end of timeline
-      const lastClipEnd = trackClips.length > 0 ? Math.max(...trackClips.map((c: any) => c.end_time)) : 0;
+      const lastClipEnd = trackClips.length > 0 ? Math.max(...trackClips.map(c => c.endTime)) : 0;
       dropPosition = Math.max(currentTime, lastClipEnd);
     } else {
       // Check if there's space at the playhead
@@ -1164,12 +1106,12 @@ export function VideoTimeline() {
       const clipDuration = mediaInfo.duration || 5;
       const nextClip = clipsAfterPlayhead[0];
       
-      if ((currentTime + clipDuration) <= nextClip.start_time) {
+      if ((currentTime + clipDuration) <= nextClip.startTime) {
         // Enough space at playhead
         dropPosition = currentTime;
       } else {
         // Place after the conflicting clips
-        dropPosition = nextClip.end_time;
+        dropPosition = nextClip.endTime;
       }
     }
 
@@ -1293,7 +1235,7 @@ export function VideoTimeline() {
 
   // Handle asset drop from media panel with track detection
   const handleAssetDropFromPanel = (assetId: string, e: React.DragEvent) => {
-    const asset = mediaAssets.find((a: any) => a.id === assetId);
+    const asset = project.mediaAssets.find((a: any) => a.id === assetId);
     
     if (!asset) {
       console.warn("Asset not found:", assetId);
@@ -1338,32 +1280,75 @@ export function VideoTimeline() {
     return undefined; // Default track selection will be handled by addClipToTimeline
   };
 
-  // Production-grade upload using MediaAssetService (no manual asset creation)
+  // Upload and create media asset
   const uploadAndCreateMediaAsset = async (file: File): Promise<any | null> => {
     try {
-      console.log('🎬 Uploading dropped file via proper service:', file.name);
+      const url = URL.createObjectURL(file);
+      const type = detectFileType(file);
       
-             // Use the proper MediaAssetService for consistent upload handling
-       const result = await MediaAssetService.uploadMediaAsset(file, {
-         onProgress: (progress: number) => {
-           console.log(`📤 Upload progress for ${file.name}: ${Math.round(progress)}%`);
-         },
-         onStatusChange: (status: string) => {
-           console.log(`📤 Upload status for ${file.name}: ${status}`);
-         }
-       });
-
-      if (result.success && result.asset) {
-        // Add the asset to the project store (with proper duplication checking)
-        addMediaAsset(result.asset);
-        console.log('✅ Asset uploaded and added to project:', file.name);
-        return result.asset;
-      } else {
-        console.error('❌ Failed to upload asset:', result.error);
+      if (type === "unknown") {
+        console.warn(`Unsupported file type: ${file.name}`);
         return null;
       }
+
+      let duration = 5;
+      let dimensions: { width: number; height: number } | undefined;
+      let video_metadata: any = undefined;
+
+      try {
+        if (type === "video") {
+          const videoMeta = await getVideoMetadata(url);
+          duration = videoMeta.duration;
+          dimensions = {
+            width: videoMeta.width,
+            height: videoMeta.height,
+          };
+          video_metadata = {
+            fps: videoMeta.fps,
+            codec: 'unknown',
+            bitrate: 'unknown',
+          };
+        } else if (type === "audio") {
+          duration = await getMediaDuration(url, "audio");
+        } else if (type === "image") {
+          duration = 5;
+          const imageDims = await getImageDimensions(url);
+          dimensions = {
+            width: imageDims.width,
+            height: imageDims.height,
+          };
+        }
+      } catch (metaError) {
+        console.warn(`Could not extract metadata for ${file.name}:`, metaError);
+        duration = type === "image" ? 5 : 10;
+      }
+
+      const assetToAdd = {
+        user_id: '', // Will be set by the addMediaAsset function
+        title: file.name,
+        description: '',
+        tags: [],
+        r2_object_key: url, // Temporary - will be replaced with R2 key
+        file_name: file.name,
+        content_type: file.type,
+        file_size_bytes: file.size,
+        source_studio: 'video-studio',
+        duration_seconds: duration,
+        dimensions,
+        video_metadata,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      addMediaAsset(assetToAdd);
+      
+      const createdAsset = project.mediaAssets.find(a => 
+        a.title === file.name && a.r2_object_key === url
+      );
+      
+      return createdAsset || null;
     } catch (error) {
-      console.error("❌ Error uploading media asset:", error);
+      console.error("Error creating media asset:", error);
       return null;
     }
   };
@@ -1375,7 +1360,7 @@ export function VideoTimeline() {
     
     // Allow override of track type (for overlay functionality)
     const targetTrackType = forceTrackType || (mediaInfo.type === 'audio' ? 'audio' : 'video');
-    const targetTrack = tracks.find((t: any) => t.track_type === targetTrackType);
+    const targetTrack = project.tracks.find((t: any) => t.type === targetTrackType);
     
     if (!targetTrack) {
       console.warn(`No ${targetTrackType} track found`);
@@ -1385,17 +1370,21 @@ export function VideoTimeline() {
     const clipStartTime = startTime !== undefined ? startTime : getSmartDropPosition(asset);
     const clipDuration = duration || mediaInfo.duration || 5;
 
-    const realAsset = mediaAssets.find((a: any) => 
-      a.title === asset.title && a.r2_object_key === asset.r2_object_key
+    const realAsset = project.mediaAssets.find(a => 
+      a.title === asset.name && a.r2_object_key === asset.url
     );
       
-    // Use the simplified addClip API that matches our store
-    addClip(
-      targetTrack.id,
-      realAsset?.id || asset.id,
-      clipStartTime,
-      clipDuration
-    );
+    addClip({
+      mediaId: realAsset?.id || asset.id,
+      trackId: targetTrack.id,
+      startTime: clipStartTime,
+      endTime: clipStartTime + clipDuration,
+      trimStart: 0,
+      trimEnd: clipDuration,
+      volume: 1,
+      muted: false,
+      effects: [],
+    });
 
     console.log(`Added ${targetTrackType} clip at ${clipStartTime}s for ${clipDuration}s (after playhead at ${currentTime}s)`);
   };
@@ -1414,7 +1403,7 @@ export function VideoTimeline() {
     
     // Store initial drag data more precisely
     setDragStartX(e.clientX);
-    setDragStartTime(clip.start_time);
+    setDragStartTime(clip.startTime);
     setDragOffset(mouseX);
     
     // Make sure we select the clip before starting the drag
@@ -1441,7 +1430,7 @@ export function VideoTimeline() {
     
     // Store initial resize position and the time value we're modifying
     setResizeStartX(e.clientX);
-    setResizeStartTime(handle === 'left' ? clip.start_time : clip.end_time);
+    setResizeStartTime(handle === 'left' ? clip.startTime : clip.endTime);
     
     setIsResizing(true);
     setResizeHandle(handle);
@@ -1488,7 +1477,7 @@ export function VideoTimeline() {
       const clip = clips.find(c => c.id === resizingClipId);
       if (!clip) return;
 
-      const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
+      const asset = project.mediaAssets.find(a => a.id === clip.mediaId);
       if (!asset) return;
 
       const mediaInfo = getMediaInfo(asset);
@@ -1515,38 +1504,38 @@ export function VideoTimeline() {
         // Left handle: adjust start time and trim start
         // Calculate new time based on the original start time plus delta
         let newStartTime = resizeStartTime + deltaTime;
-        newStartTime = Math.max(0, Math.min(newStartTime, clip.end_time - minClipDuration));
+        newStartTime = Math.max(0, Math.min(newStartTime, clip.endTime - minClipDuration));
         
         // Calculate how much the start time changed
-        const timeChange = newStartTime - clip.start_time;
+        const timeChange = newStartTime - clip.startTime;
         
         if (mediaInfo.type === 'image') {
           // For images: Allow free extension (no trim constraints)
           updateClip(resizingClipId, {
-            start_time: newStartTime,
+            startTime: newStartTime,
             // Keep trim values unchanged for images
-            trim_start: clip.trim_start,
+            trimStart: clip.trimStart,
           });
           
           // Update for visibility check
-          updatedClip.start_time = newStartTime;
+          updatedClip.startTime = newStartTime;
         } else {
           // For video/audio: Only allow trimming within the original asset duration
           
           // Calculate what the new trimStart should be
           // When startTime increases (drag right), trimStart should increase (trim more from start)
           // When startTime decreases (drag left), trimStart should decrease (trim less from start)
-          const newTrimStart = clip.trim_start + timeChange;
+          const newTrimStart = clip.trimStart + timeChange;
           
           // Only allow if trimStart stays within valid bounds
-          if (newTrimStart >= 0 && newTrimStart <= assetDuration && newTrimStart <= clip.trim_end - minClipDuration) {
+          if (newTrimStart >= 0 && newTrimStart <= assetDuration && newTrimStart <= clip.trimEnd - minClipDuration) {
           updateClip(resizingClipId, {
-            start_time: newStartTime,
-            trim_start: newTrimStart,
+            startTime: newStartTime,
+            trimStart: newTrimStart,
           });
           
           // Update for visibility check
-          updatedClip.start_time = newStartTime;
+          updatedClip.startTime = newStartTime;
           }
           // If we're trying to extend beyond available asset content, reject the resize
         }
@@ -1554,37 +1543,37 @@ export function VideoTimeline() {
         // Right handle: adjust end time and trim end
         // Calculate new time based on the original end time plus delta
         let newEndTime = resizeStartTime + deltaTime;
-        newEndTime = Math.max(clip.start_time + minClipDuration, newEndTime);
+        newEndTime = Math.max(clip.startTime + minClipDuration, newEndTime);
         
         // Calculate how much the end time changed
-        const timeChange = newEndTime - clip.end_time;
+        const timeChange = newEndTime - clip.endTime;
         
         if (mediaInfo.type === 'image') {
           // For images: Allow free extension (no duration constraints)
           updateClip(resizingClipId, {
-            end_time: newEndTime,
+            endTime: newEndTime,
             // Keep trim values unchanged for images
-            trim_end: clip.trim_end,
+            trimEnd: clip.trimEnd,
           });
           
           // Update for visibility check
-          updatedClip.end_time = newEndTime;
+          updatedClip.endTime = newEndTime;
         } else {
           // For video/audio: Only allow trimming within the original asset duration
           
           // Calculate the new clip duration and what trimEnd should be
-          const newClipDuration = newEndTime - clip.start_time;
-          const newTrimEnd = clip.trim_start + newClipDuration;
+          const newClipDuration = newEndTime - clip.startTime;
+          const newTrimEnd = clip.trimStart + newClipDuration;
           
           // Only allow if the new trimEnd doesn't exceed the asset duration
-          if (newTrimEnd <= assetDuration && newTrimEnd >= clip.trim_start + minClipDuration) {
+          if (newTrimEnd <= assetDuration && newTrimEnd >= clip.trimStart + minClipDuration) {
           updateClip(resizingClipId, {
-            end_time: newEndTime,
-            trim_end: newTrimEnd,
+            endTime: newEndTime,
+            trimEnd: newTrimEnd,
           });
           
           // Update for visibility check
-          updatedClip.end_time = newEndTime;
+          updatedClip.endTime = newEndTime;
           }
           // If we're trying to extend beyond available asset content, reject the resize
         }
@@ -1592,8 +1581,8 @@ export function VideoTimeline() {
       
       // Enhanced clip visibility logic - ensure clip edge being resized stays in view
       // Calculate the clip's position
-      const clipLeft = (updatedClip.start_time * PIXELS_PER_SECOND) + TIMELINE_PADDING;
-      const clipWidth = (updatedClip.end_time - updatedClip.start_time) * PIXELS_PER_SECOND;
+      const clipLeft = (updatedClip.startTime * PIXELS_PER_SECOND) + TIMELINE_PADDING;
+      const clipWidth = (updatedClip.endTime - updatedClip.startTime) * PIXELS_PER_SECOND;
       const clipRight = clipLeft + clipWidth;
       
       // Get timeline container dimensions
@@ -1643,7 +1632,7 @@ export function VideoTimeline() {
       document.removeEventListener("mouseup", handleMouseUp);
       document.body.style.cursor = '';
     };
-  }, [isResizing, resizingClipId, resizeHandle, clips, updateClip, mediaAssets, resizeStartX, resizeStartTime, PIXELS_PER_SECOND, timelineOffset]);
+  }, [isResizing, resizingClipId, resizeHandle, clips, updateClip, project.mediaAssets, resizeStartX, resizeStartTime, PIXELS_PER_SECOND, timelineOffset]);
 
   // Clip dragging
   useEffect(() => {
@@ -1702,7 +1691,7 @@ export function VideoTimeline() {
       
       const clip = clips.find(c => c.id === draggingClipId);
       if (clip) {
-        const clipDuration = clip.end_time - clip.start_time;
+        const clipDuration = clip.endTime - clip.startTime;
         
         // Calculate new time based on original position plus accumulated delta
         // This approach ensures consistent drag behavior regardless of framerate
@@ -1714,10 +1703,10 @@ export function VideoTimeline() {
         
         // Enforce minimum movement threshold to prevent jittering
         // This ensures a more stable dragging experience
-        if (Math.abs(newStartTime - clip.start_time) >= 0.05) {
+        if (Math.abs(newStartTime - clip.startTime) >= 0.05) {
           updateClip(draggingClipId, {
-            start_time: newStartTime,
-            end_time: newStartTime + clipDuration,
+            startTime: newStartTime,
+            endTime: newStartTime + clipDuration,
           });
         }
         
@@ -1791,13 +1780,13 @@ export function VideoTimeline() {
       return;
     }
 
-    if (currentTime <= selectedClip.start_time || currentTime >= selectedClip.end_time) {
+    if (currentTime <= selectedClip.startTime || currentTime >= selectedClip.endTime) {
       console.warn('Playhead is not within the selected clip bounds');
       return;
     }
 
     splitClip(selectedClip.id, currentTime);
-    console.log(`Split clip ${selectedClip.asset.title} at ${formatTime(currentTime)}`);
+    console.log(`Split clip ${selectedClip.asset.name} at ${formatTime(currentTime)}`);
   };
 
   // Handle clip deletion
@@ -1808,11 +1797,11 @@ export function VideoTimeline() {
     }
 
     // Confirm deletion for better UX
-    const confirmMessage = `Delete "${selectedClip.asset.title}" clip?`;
+    const confirmMessage = `Delete "${selectedClip.asset.name}" clip?`;
     if (window.confirm(confirmMessage)) {
       removeClip(selectedClip.id);
       setSelectedClipId(null); // Clear selection after deletion
-      console.log(`Deleted clip: ${selectedClip.asset.title}`);
+      console.log(`Deleted clip: ${selectedClip.asset.name}`);
     }
   };
 
@@ -1824,52 +1813,63 @@ export function VideoTimeline() {
     }
 
     // Find the track this clip belongs to
-    const sourceTrack = tracks.find((track: any) => track.id === selectedClip.track_id);
+    const sourceTrack = project.tracks.find(track => track.id === selectedClip.trackId);
     if (!sourceTrack) {
       console.error('Source track not found for duplication');
       return;
     }
 
     // Calculate ideal placement - immediately after the original clip
-    const originalEndTime = selectedClip.end_time;
-    const clipDuration = selectedClip.end_time - selectedClip.start_time;
+    const originalEndTime = selectedClip.endTime;
+    const clipDuration = selectedClip.endTime - selectedClip.startTime;
     let duplicateStartTime = originalEndTime;
 
     // Check for conflicts in the same track and find next available space
     const trackClips = sourceTrack.clips
-      .filter((clip: any) => clip.id !== selectedClip.id) // Exclude the original clip
-      .sort((a: any, b: any) => a.start_time - b.start_time);
+      .filter(clip => clip.id !== selectedClip.id) // Exclude the original clip
+      .sort((a, b) => a.startTime - b.startTime);
 
     // Find first available space after the original clip
     for (const existingClip of trackClips) {
-      if (existingClip.start_time >= duplicateStartTime) {
-        if (duplicateStartTime + clipDuration <= existingClip.start_time) {
+      if (existingClip.startTime >= duplicateStartTime) {
+        if (duplicateStartTime + clipDuration <= existingClip.startTime) {
           // Found space before this clip
           break;
         } else {
           // Move past this conflicting clip
-          duplicateStartTime = existingClip.end_time;
+          duplicateStartTime = existingClip.endTime;
         }
       }
     }
 
-    // Use the simplified addClip API that matches our store
-    addClip(
-      selectedClip.track_id,
-      selectedClip.asset_id,
-      duplicateStartTime,
-      clipDuration
-    );
+    // Create the duplicate clip with all original properties
+    const duplicateClip = {
+      mediaId: selectedClip.mediaId,
+      trackId: selectedClip.trackId,
+      startTime: duplicateStartTime,
+      endTime: duplicateStartTime + clipDuration,
+      trimStart: selectedClip.trimStart,
+      trimEnd: selectedClip.trimEnd,
+      volume: selectedClip.volume || 1,
+      muted: selectedClip.muted || false,
+      effects: selectedClip.effects ? [...selectedClip.effects] : [], // Deep copy effects
+      // Copy any other properties that might exist
+      ...(selectedClip.speed && { speed: selectedClip.speed }),
+      ...(selectedClip.opacity && { opacity: selectedClip.opacity }),
+    };
+
+    // Add the duplicate clip to the project
+    addClip(duplicateClip);
 
     // Professional behavior: Select the new duplicate clip
     // We need to wait a bit for the clip to be added and get its ID
     setTimeout(() => {
       // Find the newly created clip (it should be the last one added to the track)
-      const updatedTrack = tracks.find((track: any) => track.id === selectedClip.track_id);
+      const updatedTrack = project.tracks.find(track => track.id === selectedClip.trackId);
       if (updatedTrack) {
         const newestClip = updatedTrack.clips
-          .filter((clip: any) => clip.start_time === duplicateStartTime)
-          .sort((a: any, b: any) => (b.id || '').localeCompare(a.id || ''))[0]; // Get the newest by ID
+          .filter(clip => clip.startTime === duplicateStartTime)
+          .sort((a, b) => (b.id || '').localeCompare(a.id || ''))[0]; // Get the newest by ID
         
         if (newestClip) {
           setSelectedClipId(newestClip.id);
@@ -1877,7 +1877,7 @@ export function VideoTimeline() {
       }
     }, 50); // Small delay to ensure the clip is added
 
-    console.log(`Duplicated clip: ${selectedClip.asset.title} at ${formatTime(duplicateStartTime)}`);
+    console.log(`Duplicated clip: ${selectedClip.asset.name} at ${formatTime(duplicateStartTime)}`);
   };
 
   // Professional Volume Controls (Pro Tools style)
@@ -1895,12 +1895,12 @@ export function VideoTimeline() {
   const handleClipMuteToggle = () => {
     if (!selectedClip) return;
     
-    const newMutedState = !selectedClip.is_muted;
-    updateClip(selectedClip.id, { is_muted: newMutedState });
+    const newMutedState = !selectedClip.muted;
+    updateClip(selectedClip.id, { muted: newMutedState });
     
     // Use professional audio engine for real muting
     audioEngine.setTrackMuted(selectedClip.id, newMutedState);
-    console.log(`🔇 Clip ${selectedClip.asset.title} ${newMutedState ? 'muted' : 'unmuted'}`);
+    console.log(`🔇 Clip ${selectedClip.asset.name} ${newMutedState ? 'muted' : 'unmuted'}`);
   };
 
 
@@ -1950,15 +1950,15 @@ export function VideoTimeline() {
   // Pro Tools style: Determine current mute state and volume
   const getCurrentVolumeState = () => {
     if (selectedClip) {
-      const effectiveVolume = (isMasterMuted || selectedClip.is_muted) ? 0 : (selectedClip.volume || 1);
+      const effectiveVolume = (isMasterMuted || selectedClip.muted) ? 0 : (selectedClip.volume || 1);
       const displayVolume = selectedClip.volume || 1; // Always show actual volume level on slider
       
       return {
-        isMuted: isMasterMuted || selectedClip.is_muted,
+        isMuted: isMasterMuted || selectedClip.muted,
         volume: displayVolume, // For slider display
         effectiveVolume: effectiveVolume, // For actual audio
-        isClipMuted: selectedClip.is_muted,
-        label: `Clip: ${selectedClip.asset.title}`
+        isClipMuted: selectedClip.muted,
+        label: `Clip: ${selectedClip.asset.name}`
       };
     }
     
@@ -1985,13 +1985,7 @@ export function VideoTimeline() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={async () => {
-              // Resume audio context on play to fix user gesture requirement
-              if (!isPlaying) {
-                await audioEngine.resumeAudioContext();
-              }
-              setIsPlaying(!isPlaying);
-            }}
+            onClick={() => setIsPlaying(!isPlaying)}
             className="text-zinc-400 hover:text-white h-7 w-7 p-0"
             title={isPlaying ? "Pause" : "Play"}
           >
@@ -2137,7 +2131,7 @@ export function VideoTimeline() {
                   </span>
                 </div>
                 <span className="text-xs text-zinc-500">
-                  {(selectedClip.end_time - selectedClip.start_time).toFixed(1)}s
+                  {(selectedClip.endTime - selectedClip.startTime).toFixed(1)}s
                 </span>
               </div>
             )}
@@ -2556,8 +2550,8 @@ export function VideoTimeline() {
                       data-track-type="overlay"
                     >
                       {clipsByTrack.overlay.map((clip) => {
-                        const clipWidth = (clip.end_time - clip.start_time) * PIXELS_PER_SECOND;
-                        const clipLeft = (clip.start_time * PIXELS_PER_SECOND) + TIMELINE_PADDING;
+                        const clipWidth = (clip.endTime - clip.startTime) * PIXELS_PER_SECOND;
+                        const clipLeft = (clip.startTime * PIXELS_PER_SECOND) + TIMELINE_PADDING;
                         
                         return (
                           <OverlayClip
@@ -2593,8 +2587,8 @@ export function VideoTimeline() {
                       data-track-type="video"
                     >
                       {clipsByTrack.video.map((clip) => {
-                        const clipWidth = (clip.end_time - clip.start_time) * PIXELS_PER_SECOND;
-                        const clipLeft = (clip.start_time * PIXELS_PER_SECOND) + TIMELINE_PADDING;
+                        const clipWidth = (clip.endTime - clip.startTime) * PIXELS_PER_SECOND;
+                        const clipLeft = (clip.startTime * PIXELS_PER_SECOND) + TIMELINE_PADDING;
                         
                         return (
                           <VideoClip
@@ -2630,8 +2624,8 @@ export function VideoTimeline() {
                       data-track-type="audio"
                     >
                       {clipsByTrack.audio.map((clip) => {
-                        const clipWidth = (clip.end_time - clip.start_time) * PIXELS_PER_SECOND;
-                        const clipLeft = (clip.start_time * PIXELS_PER_SECOND) + TIMELINE_PADDING;
+                        const clipWidth = (clip.endTime - clip.startTime) * PIXELS_PER_SECOND;
+                        const clipLeft = (clip.startTime * PIXELS_PER_SECOND) + TIMELINE_PADDING;
                         
                         return (
                           <AudioClip

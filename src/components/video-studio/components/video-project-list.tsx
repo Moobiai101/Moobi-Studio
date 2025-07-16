@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useEffect } from 'react';
-import { VideoProjectService } from '@/services/video-projects';
-import { VideoEditorProject } from '@/types/database';
+import { VideoStudioService } from '@/services/video-studio-service';
+import { VideoStudioProject } from '@/types/video-studio-database';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
@@ -11,11 +11,11 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 
 interface VideoProjectListProps {
-  onOpenProject: (project: VideoEditorProject) => void;
+  onOpenProject: (project: VideoStudioProject) => void;
 }
 
 export function VideoProjectList({ onOpenProject }: VideoProjectListProps) {
-  const [projects, setProjects] = useState<VideoEditorProject[]>([]);
+  const [projects, setProjects] = useState<VideoStudioProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [newProjectTitle, setNewProjectTitle] = useState('');
@@ -29,7 +29,7 @@ export function VideoProjectList({ onOpenProject }: VideoProjectListProps) {
   const loadProjects = async () => {
     try {
       setLoading(true);
-      const userProjects = await VideoProjectService.getUserProjects();
+      const userProjects = await VideoStudioService.getUserProjects();
       setProjects(userProjects);
     } catch (error) {
       console.error('Failed to load projects:', error);
@@ -47,7 +47,14 @@ export function VideoProjectList({ onOpenProject }: VideoProjectListProps) {
 
     try {
       setCreating(true);
-      const newProject = await VideoProjectService.createProject(newProjectTitle);
+      const newProject = await VideoStudioService.createProject({
+        title: newProjectTitle,
+        description: '',
+        resolution_width: 1920,
+        resolution_height: 1080,
+        fps: 30,
+        aspect_ratio: '16:9'
+      });
       setProjects(prev => [newProject, ...prev]);
       setCreateDialogOpen(false);
       setNewProjectTitle('');
@@ -67,7 +74,7 @@ export function VideoProjectList({ onOpenProject }: VideoProjectListProps) {
     if (!confirm('Are you sure you want to delete this project?')) return;
 
     try {
-      await VideoProjectService.deleteProject(projectId);
+      await VideoStudioService.deleteProject(projectId);
       setProjects(prev => prev.filter(p => p.id !== projectId));
       toast.success('Project deleted successfully');
     } catch (error) {
@@ -168,7 +175,7 @@ export function VideoProjectList({ onOpenProject }: VideoProjectListProps) {
                 </CardTitle>
                 <div className="text-sm text-zinc-400">
                   <div>Duration: {formatDuration(project.duration_seconds)}</div>
-                  <div>Resolution: {typeof project.resolution === 'object' && project.resolution ? `${(project.resolution as any).width || 1920}×${(project.resolution as any).height || 1080}` : '1920×1080'}</div>
+                  <div>Resolution: {project.resolution_width}×{project.resolution_height}</div>
                   <div>Updated: {formatDate(project.updated_at)}</div>
                 </div>
               </CardHeader>

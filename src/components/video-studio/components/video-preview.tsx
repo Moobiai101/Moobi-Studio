@@ -9,8 +9,6 @@ import { VideoTransformControls } from "./video-transform-controls";
 export function VideoPreview() {
   const {
     project,
-    tracks,
-    mediaAssets,
     currentTime,
     isPlaying,
     playbackRate,
@@ -22,51 +20,32 @@ export function VideoPreview() {
   const playerRef = useRef<PlayerRef>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
 
-  // Helper to safely get resolution
-  const getResolution = () => {
-    if (!project?.resolution || typeof project.resolution !== 'object') {
-      return { width: 1920, height: 1080 };
-    }
-    const res = project.resolution as any;
-    return {
-      width: typeof res.width === 'number' ? res.width : 1920,
-      height: typeof res.height === 'number' ? res.height : 1080
-    };
-  };
-
-  // Helper to safely get FPS
-  const getFPS = () => {
-    return project?.fps || 30;
-  };
-
   // Calculate total project duration based on clips
   const calculateProjectDuration = useCallback(() => {
     let maxEndTime = 0;
-    tracks.forEach((track: any) => {
-      track.clips.forEach((clip: any) => {
-        maxEndTime = Math.max(maxEndTime, clip.end_time || 0);
+    project.tracks.forEach(track => {
+      track.clips.forEach(clip => {
+        maxEndTime = Math.max(maxEndTime, clip.endTime);
       });
     });
     return Math.max(maxEndTime, 10); // Minimum 10 seconds
-  }, [tracks]);
+  }, [project.tracks]);
 
   const projectDuration = calculateProjectDuration();
-  const resolution = getResolution();
-  const fps = getFPS();
-  const durationInFrames = Math.max(1, Math.floor(projectDuration * fps));
-  const hasContent = mediaAssets.length > 0 && tracks.some((track: any) => track.clips.length > 0);
+  const durationInFrames = Math.max(1, Math.floor(projectDuration * project.fps));
+  const hasContent = project.mediaAssets.length > 0 && project.tracks.some(track => track.clips.length > 0);
 
   // Get overlay clips for transform controls
   const overlayClips = useMemo(() => 
-    tracks
-      .filter((track: any) => track.track_type === 'overlay')
-      .flatMap((track: any) => track.clips)
-      .map((clip: any) => {
+    project.tracks
+      .filter(track => track.type === 'overlay')
+      .flatMap(track => track.clips)
+      .map(clip => {
         // Include the asset data with each clip for the transform controls
-        const asset = mediaAssets.find((a: any) => a.id === clip.asset_id);
+        const asset = project.mediaAssets.find(a => a.id === clip.mediaId);
         return { ...clip, asset };
       }),
-    [tracks, mediaAssets]
+    [project.tracks, project.mediaAssets]
   );
 
   // Transform update handler for overlays
@@ -123,20 +102,20 @@ export function VideoPreview() {
 
     player.addEventListener("seeked", (e) => {
       const frame = e.detail.frame;
-      const time = frame / fps;
+      const time = frame / project.fps;
       setCurrentTime(time);
     });
 
     player.addEventListener("frameupdate", (e) => {
       const frame = e.detail.frame;
-      const time = frame / fps;
+      const time = frame / project.fps;
       setCurrentTime(time);
     });
 
     player.addEventListener("ended", () => {
       setIsPlaying(false);
     });
-  }, [fps, setCurrentTime, setIsPlaying]);
+  }, [project.fps, setCurrentTime, setIsPlaying]);
 
   // Sync external play/pause state with player
   useEffect(() => {
@@ -153,14 +132,14 @@ export function VideoPreview() {
   useEffect(() => {
     if (!playerRef.current) return;
     
-    const currentFrame = Math.floor(currentTime * fps);
+    const currentFrame = Math.floor(currentTime * project.fps);
     const playerFrame = playerRef.current.getCurrentFrame();
     
     // Only seek if there's a significant difference to avoid seek loops
     if (Math.abs(currentFrame - playerFrame) > 2) {
       playerRef.current.seekTo(currentFrame);
     }
-  }, [currentTime, fps]);
+  }, [currentTime, project.fps]);
 
   // Keep Remotion Player muted to prevent double audio with our audio engine
   useEffect(() => {
@@ -181,40 +160,6 @@ export function VideoPreview() {
     };
   }, [playerRef]);
 
-  // Don't render if no project
-  if (!project) {
-    return (
-      <div className="w-full h-full flex items-center justify-center">
-        <div className="flex flex-col items-center justify-center text-center px-8 h-full">
-          <div className="w-32 h-32 bg-zinc-800 rounded-xl flex items-center justify-center mb-6">
-            <svg 
-              width="48" 
-              height="48" 
-              viewBox="0 0 24 24" 
-              fill="none" 
-              stroke="currentColor" 
-              strokeWidth="1" 
-              className="text-zinc-600"
-            >
-              <rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"></rect>
-              <line x1="7" y1="2" x2="7" y2="22"></line>
-              <line x1="17" y1="2" x2="17" y2="22"></line>
-              <line x1="2" y1="12" x2="22" y2="12"></line>
-              <line x1="2" y1="7" x2="7" y2="7"></line>
-              <line x1="2" y1="17" x2="7" y2="17"></line>
-              <line x1="17" y1="17" x2="22" y2="17"></line>
-              <line x1="17" y1="7" x2="22" y2="7"></line>
-            </svg>
-          </div>
-          <h3 className="text-xl font-medium text-white mb-3">Loading project...</h3>
-          <p className="text-zinc-400 leading-relaxed max-w-sm">
-            Please wait while we initialize your video project
-          </p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="w-full h-full flex items-center justify-center">
       {hasContent ? (
@@ -227,16 +172,12 @@ export function VideoPreview() {
             ref={handlePlayerRef}
             component={VideoComposition}
             inputProps={{
-              project: {
-                project,
-                tracks,
-                mediaAssets
-              },
+              project,
             }}
             durationInFrames={durationInFrames}
-            compositionWidth={resolution.width}
-            compositionHeight={resolution.height}
-            fps={fps}
+            compositionWidth={project.resolution.width}
+            compositionHeight={project.resolution.height}
+            fps={project.fps}
             style={{
               width: "100%",
               height: "100%",
@@ -255,7 +196,6 @@ export function VideoPreview() {
             playbackRate={playbackRate}
             initiallyMuted={true}
             showVolumeControls={false}
-            acknowledgeRemotionLicense={true}
           />
           
           {/* Transform Controls Layer - Professional overlay system */}

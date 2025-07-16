@@ -1,1258 +1,782 @@
-import { createStore } from "zustand";
-import { VideoProjectService, createAutoSave, createTimelineSave } from "@/services/video-projects";
-import { TimelineService } from "@/services/timeline-service";
-// Removed DeviceService - using simplified user-only approach
-import { 
-  VideoEditorProject, 
-  UserAsset, 
-  TimelineTrack, 
-  TimelineClip,
-  ProjectTimelineData,
-  ClipEffect,
-  AudioEffect,
-  TextElement,
-  ClipTransition,
-  Keyframe,
-  TransformData
-} from "@/types/database";
-import { MediaAssetService } from "@/services/media-assets";
-import { indexedDBManager } from "@/lib/storage/indexed-db-manager";
-import { createClient } from "@/lib/supabase/client";
+import { createStore } from "zustand/vanilla";
+import { VideoStudioService } from "@/services/video-studio-service";
+import { VideoStudioProject, TimelineData } from "@/types/video-studio-database";
+import { UserAsset } from "@/types/database";
+import { AutoSaveSystem } from "@/lib/auto-save/auto-save-system";
 
-const supabase = createClient();
-
-// Auto-save delays
-const AUTO_SAVE_DELAY = 3000; // 3 seconds for project state
-const TIMELINE_SAVE_DELAY = 1000; // 1 second for timeline changes
+// Generate proper UUIDs for database compatibility
+const generateUUID = () => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
 
 // Re-export database types for compatibility
 export type MediaAsset = UserAsset;
 
-// Helper function to extract media info from UserAsset
-export const getMediaInfo = (asset: UserAsset) => {
-  const isVideo = asset.content_type.startsWith('video/');
-  const isAudio = asset.content_type.startsWith('audio/');
-  const isImage = asset.content_type.startsWith('image/');
+// Helper function to get media info from UserAsset
+export const getMediaInfo = (asset: UserAsset | any) => {
+  let type: 'video' | 'audio' | 'image' | 'unknown' = 'unknown';
   
-  // Type guard helpers for Json fields
-  const getDimensions = (dimensions: any): { width?: number; height?: number } => {
-    if (typeof dimensions === 'object' && dimensions !== null) {
-      return {
-        width: typeof dimensions.width === 'number' ? dimensions.width : undefined,
-        height: typeof dimensions.height === 'number' ? dimensions.height : undefined
-      };
+  // Handle both UserAsset format and the legacy format
+  const contentType = asset.content_type || asset.metadata?.type || '';
+  
+  if (contentType && typeof contentType === 'string') {
+    if (contentType.startsWith('video/')) {
+      type = 'video';
+    } else if (contentType.startsWith('audio/')) {
+      type = 'audio';
+    } else if (contentType.startsWith('image/')) {
+      type = 'image';
     }
-    return {};
-  };
-
-  const getVideoMetadata = (metadata: any): { fps?: number } => {
-    if (typeof metadata === 'object' && metadata !== null) {
-      return {
-        fps: typeof metadata.fps === 'number' ? metadata.fps : undefined
-      };
-    }
-    return {};
-  };
-
-  const dimensions = getDimensions(asset.dimensions);
-  const videoMetadata = getVideoMetadata(asset.video_metadata);
+  } else if (asset.type) {
+    // Fallback to legacy format
+    type = asset.type;
+  }
   
   return {
-    type: isVideo ? 'video' : isAudio ? 'audio' : 'image' as 'video' | 'audio' | 'image',
-    url: asset.local_asset_id ? `indexeddb://${asset.local_asset_id}` : MediaAssetService.getAssetUrl(asset.r2_object_key),
-    name: (asset.title && typeof asset.title === 'string' ? asset.title : '') || 
-          (asset.file_name && typeof asset.file_name === 'string' ? asset.file_name : '') || 
-          'Untitled Asset',
-    duration: asset.duration_seconds,
+    id: asset.id,
+    type,
+    url: asset.r2_object_key || asset.url, // Handle both formats
+    name: asset.file_name || asset.name,   // Handle both formats
+    duration: asset.duration_seconds || asset.duration,
     metadata: {
-      width: dimensions.width,
-      height: dimensions.height,
-      fps: videoMetadata.fps,
-      size: asset.file_size_bytes,
-    }
+      size: asset.file_size_bytes || asset.metadata?.size,
+      width: asset.dimensions?.width || asset.metadata?.width,
+      height: asset.dimensions?.height || asset.metadata?.height,
+      fps: asset.video_metadata?.fps || asset.metadata?.fps,
+    },
+    createdAt: asset.created_at ? new Date(asset.created_at) : asset.createdAt || new Date(),
   };
 };
 
-// Enhanced interfaces compatible with new schema
-export interface EnhancedTimelineClip extends TimelineClip {
-  // Add UI-specific properties
-  selected?: boolean;
-  effects?: ClipEffect[];
-  audioEffects?: AudioEffect[];
-  textElements?: TextElement[];
-  transitions?: ClipTransition[];
-  keyframes?: Keyframe[];
+export interface TimelineClip {
+  id: string;
+  mediaId: string;
+  trackId: string;
+  startTime: number;
+  endTime: number;
+  trimStart: number;
+  trimEnd: number;
+  volume: number;
+  muted: boolean;
+  effects: Effect[];
 }
 
-export interface EnhancedTimelineTrack extends TimelineTrack {
-  // Add UI-specific properties
-  clips: EnhancedTimelineClip[];
-  height?: number;
-  selected?: boolean;
+export interface Effect {
+  id: string;
+  type: string;
+  parameters: Record<string, any>;
+  enabled: boolean;
+}
+
+export interface Track {
+  id: string;
+  type: "video" | "audio" | "overlay";
+  name: string;
+  clips: TimelineClip[];
+  muted: boolean;
+  volume: number;
+  locked: boolean;
+  visible: boolean;
+  height: number;
+  opacity?: number; // For overlay tracks
+  blendMode?: "normal" | "multiply" | "screen" | "overlay"; // For overlay tracks
+}
+
+export interface VideoProject {
+  id: string;
+  name: string;
+  tracks: Track[];
+  mediaAssets: MediaAsset[];
+  duration: number;
+  fps: number;
+  resolution: {
+    width: number;
+    height: number;
+  };
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface VideoProjectState {
   // Project data
-  project: VideoEditorProject | null;
-  timeline: ProjectTimelineData | null;
-  tracks: EnhancedTimelineTrack[];
-  mediaAssets: MediaAsset[];
-  
-  // Loading states
-  isLoading: boolean;
-  isSaving: boolean;
-  lastSaved: Date | null;
+  project: VideoProject;
   
   // Playback state
   currentTime: number;
   isPlaying: boolean;
   playbackRate: number;
   
-  // Selection state
+  // UI state
   selectedClipId: string | null;
   selectedTrackId: string | null;
   selectedMediaId: string | null;
-  selectedKeyframes: string[];
-  
-  // Timeline UI state
   timelineZoom: number;
   timelineScroll: number;
-  snapToGrid: boolean;
-  gridSize: number;
   
   // Dialog states
   projectDialogOpen: boolean;
   exportDialogOpen: boolean;
   keyDialogOpen: boolean;
-  mediaGalleryOpen: boolean;
   
   // AI generation state
   isGenerating: boolean;
   generationProgress: number;
-  generationStatus: string;
   
-  // Device and sync state
-  deviceSyncStatus: 'synced' | 'syncing' | 'offline' | 'conflict';
-  availableDevices: number;
-  
-  // Actions - Playback
+  // Actions
   setCurrentTime: (time: number) => void;
   setIsPlaying: (playing: boolean) => void;
   setPlaybackRate: (rate: number) => void;
-  seek: (time: number) => void;
   
-  // Actions - Project Management
-  initializeProject: (projectId: string) => Promise<void>;
-  saveProject: () => Promise<void>;
-  loadProject: (projectId: string) => Promise<void>;
-  createRecoveryPoint: () => Promise<void>;
-  
-  // Actions - Media Management
-  addMediaAsset: (asset: MediaAsset) => void;
+  // Media management
+  addMediaAsset: (asset: Omit<MediaAsset, "id" | "createdAt">) => void;
   removeMediaAsset: (id: string) => void;
   setSelectedMediaId: (id: string | null) => void;
-  refreshMediaAssets: () => Promise<void>;
-  recoverAndCleanupAssets: () => Promise<{ success: boolean; stats?: any; error?: string }>;
-  validateAssetIntegrity: (assetId: string) => Promise<{ valid: boolean; error?: string }>;
   
-  // Actions - Track Management
-  addTrack: (type: 'video' | 'audio' | 'overlay' | 'text') => Promise<void>;
-  removeTrack: (id: string) => Promise<void>;
-  updateTrack: (id: string, updates: Partial<TimelineTrack>) => Promise<void>;
+  // Track management
+  addTrack: (type: "video" | "audio" | "overlay") => void;
+  removeTrack: (id: string) => void;
+  updateTrack: (id: string, updates: Partial<Track>) => void;
   setSelectedTrackId: (id: string | null) => void;
-  reorderTracks: (fromIndex: number, toIndex: number) => Promise<void>;
   
-  // Actions - Clip Management
-  addClip: (trackId: string, assetId: string, startTime: number, duration?: number) => Promise<void>;
-  removeClip: (id: string) => Promise<void>;
-  updateClip: (id: string, updates: Partial<TimelineClip>) => Promise<void>;
+  // Clip management
+  addClip: (clip: Omit<TimelineClip, "id">) => void;
+  removeClip: (id: string) => void;
+  updateClip: (id: string, updates: Partial<TimelineClip>) => void;
   setSelectedClipId: (id: string | null) => void;
-  splitClip: (clipId: string, splitTime: number) => Promise<void>;
-  trimClip: (clipId: string, trimStart: number, trimEnd?: number) => Promise<void>;
-  moveClip: (clipId: string, newTrackId: string, newStartTime: number) => Promise<void>;
-  duplicateClip: (clipId: string) => Promise<void>;
+  splitClip: (clipId: string, splitTime: number) => void;
   
-  // Actions - Effects Management
-  addClipEffect: (clipId: string, effectType: string, effectName: string, parameters?: any) => Promise<void>;
-  removeClipEffect: (effectId: string) => Promise<void>;
-  updateClipEffect: (effectId: string, parameters: any) => Promise<void>;
-  addAudioEffect: (clipId: string, effectType: string, effectName: string, parameters?: any) => Promise<void>;
-  addTextElement: (clipId: string, text: string, style?: any) => Promise<void>;
-  addTransition: (fromClipId: string, toClipId: string, transitionType: string, duration: number) => Promise<void>;
-  
-  // Actions - Timeline Controls
+  // Timeline controls
   setTimelineZoom: (zoom: number) => void;
   setTimelineScroll: (scroll: number) => void;
-  setSnapToGrid: (snap: boolean) => void;
-  setGridSize: (size: number) => void;
   
-  // Actions - Selection Management
-  selectMultipleClips: (clipIds: string[]) => void;
-  clearSelection: () => void;
-  selectAll: () => void;
-  
-  // Actions - Dialog Controls
+  // Dialog controls
   setProjectDialogOpen: (open: boolean) => void;
   setExportDialogOpen: (open: boolean) => void;
   setKeyDialogOpen: (open: boolean) => void;
-  setMediaGalleryOpen: (open: boolean) => void;
   
-  // Actions - AI Generation
+  // AI generation
   setIsGenerating: (generating: boolean) => void;
   setGenerationProgress: (progress: number) => void;
-  setGenerationStatus: (status: string) => void;
   
-  // Actions - Device Sync
-  updateDeviceActivity: () => Promise<void>;
-  checkSyncStatus: () => Promise<void>;
-  resolveConflicts: () => Promise<void>;
-  
-  // Actions - Import/Export
-  exportProject: (format: string, settings?: any) => Promise<void>;
-  importMedia: (files: File[]) => Promise<void>;
-  
-  // Actions - History/Undo
-  undo: () => Promise<void>;
-  redo: () => Promise<void>;
-  canUndo: () => boolean;
-  canRedo: () => boolean;
+  // Project management
+  saveProject: () => Promise<void>;
+  loadProject: (projectId: string) => Promise<void>;
+  exportProject: (format: string) => Promise<void>;
 }
+
+const createDefaultProject = (projectId: string): VideoProject => ({
+  id: projectId,
+  name: "Untitled Project",
+  tracks: [
+    {
+      id: generateUUID(),
+      type: "overlay",
+      name: "Overlay Track",
+      clips: [],
+      muted: false,
+      volume: 1,
+      locked: false,
+      visible: true,
+      height: 60,
+      opacity: 1,
+      blendMode: "normal",
+    },
+    {
+      id: generateUUID(),
+      type: "video",
+      name: "Video Track 1",
+      clips: [],
+      muted: false,
+      volume: 1,
+      locked: false,
+      visible: true,
+      height: 80,
+    },
+    {
+      id: generateUUID(),
+      type: "audio",
+      name: "Audio Track 1",
+      clips: [],
+      muted: false,
+      volume: 1,
+      locked: false,
+      visible: true,
+      height: 60,
+    },
+  ],
+  mediaAssets: [],
+  duration: 0, // Start with 0 duration, will update based on content
+  fps: 30,
+  resolution: {
+    width: 1920,
+    height: 1080,
+  },
+  createdAt: new Date(),
+  updatedAt: new Date(),
+});
 
 export type VideoProjectStore = ReturnType<typeof createVideoProjectStore>;
 
-// Helper function to safely extract timeline data properties
-const getTimelineDataProperty = (timelineData: any, property: string, defaultValue: any): any => {
-  if (typeof timelineData === 'object' && timelineData !== null && property in timelineData) {
-    return timelineData[property];
-  }
-  return defaultValue;
-};
-
 export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
   createStore<VideoProjectState>((set, get) => {
-    // Create auto-save instances for this project
-    const autoSave = createAutoSave(projectId);
-    const timelineSave = createTimelineSave(projectId);
-
-    // Helper to trigger auto-save with current state
-    const triggerAutoSave = () => {
-      const state = get();
-      if (!state.project) return;
-      
-      const projectState = {
-        project: state.project,
-        timeline: state.timeline,
-        currentTime: state.currentTime,
-        zoom: state.timelineZoom,
-        scroll: state.timelineScroll
-      };
-      
-      const assetManifest = state.mediaAssets.map(asset => ({
-        id: asset.id,
-        local_asset_id: asset.local_asset_id,
-        filename: asset.file_name,
-        content_type: asset.content_type,
-        file_size: asset.file_size_bytes
-      }));
-      
-      autoSave(projectState, assetManifest);
+    
+    // Helper function to queue auto-save after state changes
+    const queueAutoSave = (updatedProject: VideoProject) => {
+      const autoSave = AutoSaveSystem.getInstance();
+      autoSave.queueSave(updatedProject.id, { 
+        type: 'project', 
+        data: { 
+          updated_at: updatedProject.updatedAt.toISOString(),
+          file_count: updatedProject.mediaAssets.length,
+          total_file_size: updatedProject.mediaAssets.reduce((sum, a) => sum + a.file_size_bytes, 0)
+        } 
+      });
     };
-
-    // Helper to trigger timeline save
-    const triggerTimelineSave = () => {
-      const state = get();
-      if (!state.project) return;
-      
-      const timelineData = {
-        currentTime: state.currentTime,
-          zoom: state.timelineZoom,
-          scroll: state.timelineScroll,
-        snapToGrid: state.snapToGrid,
-        gridSize: state.gridSize
-      };
-      
-      timelineSave(timelineData);
-    };
-
-    // Helper to update project duration
-    const updateProjectDuration = async () => {
-      const state = get();
-      if (!state.project) return;
-      
-      try {
-        const duration = await VideoProjectService.calculateProjectDuration(state.project.id);
-        set((state) => ({
-          project: state.project ? { ...state.project, duration_seconds: duration } : null
-        }));
-      } catch (error) {
-        console.error('Error updating project duration:', error);
-      }
-    };
-
+    
     return {
     // Initial state
-      project: null,
-      timeline: null,
-      tracks: [],
-      mediaAssets: [],
-      
-      // Loading states
-      isLoading: false,
-      isSaving: false,
-      lastSaved: null,
-      
-      // Playback state
+    project: createDefaultProject(projectId),
     currentTime: 0,
     isPlaying: false,
     playbackRate: 1,
-      
-      // Selection state
     selectedClipId: null,
     selectedTrackId: null,
     selectedMediaId: null,
-      selectedKeyframes: [],
-      
-      // Timeline UI state
     timelineZoom: 1,
     timelineScroll: 0,
-      snapToGrid: true,
-      gridSize: 1,
-      
-      // Dialog states
     projectDialogOpen: false,
     exportDialogOpen: false,
     keyDialogOpen: false,
-      mediaGalleryOpen: false,
-      
-      // AI generation state
     isGenerating: false,
     generationProgress: 0,
-      generationStatus: '',
 
-      // Device and sync state
-      deviceSyncStatus: 'synced',
-      availableDevices: 1,
-
-      // ============================================================================
-      // PLAYBACK ACTIONS
-      // ============================================================================
-
-      setCurrentTime: (time) => {
-        set({ currentTime: time });
-        triggerTimelineSave();
-      },
-      
+    // Playback actions
+    setCurrentTime: (time) => set({ currentTime: time }),
     setIsPlaying: (playing) => set({ isPlaying: playing }),
     setPlaybackRate: (rate) => set({ playbackRate: rate }),
 
-      seek: (time) => {
-        set({ currentTime: time, isPlaying: false });
-        triggerTimelineSave();
-      },
-
-      // ============================================================================
-      // PROJECT MANAGEMENT ACTIONS
-      // ============================================================================
-
-      initializeProject: async (projectId: string) => {
-        set({ isLoading: true });
-        try {
-          // Device registration no longer needed in simplified approach
-          
-          // Load project with timeline data
-          const { project, timeline } = await VideoProjectService.getProjectWithTimeline(projectId);
-          
-          // Load media assets
-          const mediaAssets = await VideoProjectService.getUserVideoAssets();
-          
-          // Convert timeline data to enhanced format
-          const enhancedTracks: EnhancedTimelineTrack[] = timeline.tracks.map(track => ({
-            ...track,
-            clips: timeline.clips
-              .filter(clip => clip.track_id === track.id)
-              .map(clip => ({
-                ...clip,
-                effects: timeline.effects.filter(e => e.clip_id === clip.id),
-                audioEffects: timeline.audioEffects.filter(e => e.clip_id === clip.id),
-                textElements: timeline.textElements.filter(e => e.clip_id === clip.id),
-                transitions: timeline.transitions.filter(t => 
-                  t.from_clip_id === clip.id || t.to_clip_id === clip.id
-                ),
-                keyframes: timeline.keyframes.filter(k => k.clip_id === clip.id)
-              })),
-            height: track.track_type === 'video' ? 80 : 60
-          }));
-          
-          set({
-            project,
-            timeline,
-            tracks: enhancedTracks,
-            mediaAssets,
-            isLoading: false,
-            currentTime: getTimelineDataProperty(project.timeline_data, 'currentTime', 0),
-            timelineZoom: getTimelineDataProperty(project.timeline_data, 'zoom', 1),
-            timelineScroll: getTimelineDataProperty(project.timeline_data, 'scroll', 0),
-            snapToGrid: getTimelineDataProperty(project.timeline_data, 'snapToGrid', true),
-            gridSize: getTimelineDataProperty(project.timeline_data, 'gridSize', 1)
-          });
-
-          // Production-grade: Auto-recovery on project load
-          console.log('🔧 Running automatic asset recovery on project initialization...');
-          setTimeout(async () => {
-            try {
-              const recoveryResult = await get().recoverAndCleanupAssets();
-              if (recoveryResult.success && recoveryResult.stats) {
-                const { orphaned, missing, corrupted, final } = recoveryResult.stats;
-                if (orphaned > 0 || missing > 0 || corrupted > 0) {
-                  console.log(`🔧 Auto-recovery completed: removed ${orphaned + corrupted} invalid assets, recovered ${missing} missing assets, final count: ${final}`);
-                }
-              }
-            } catch (error) {
-              console.warn('⚠️ Auto-recovery failed, but project can continue:', error);
-            }
-          }, 1000); // Short delay to allow initial state to settle
-          
-          // Device activity tracking removed in simplified approach
-          
-        } catch (error) {
-          console.error('Error initializing project:', error);
-          set({ isLoading: false });
-        }
-      },
-
-      saveProject: async () => {
-        const state = get();
-        if (!state.project) return;
-        
-        set({ isSaving: true });
-        try {
-          await VideoProjectService.updateProject(state.project.id, {
-            timeline_data: {
-              currentTime: state.currentTime,
-              zoom: state.timelineZoom,
-              scroll: state.timelineScroll,
-              snapToGrid: state.snapToGrid,
-              gridSize: state.gridSize
-            }
-          });
-          
-          set({ isSaving: false, lastSaved: new Date() });
-          triggerAutoSave();
-        } catch (error) {
-          console.error('Error saving project:', error);
-          set({ isSaving: false });
-        }
-      },
-
-      loadProject: async (projectId: string) => {
-        await get().initializeProject(projectId);
-      },
-
-      createRecoveryPoint: async () => {
-        const state = get();
-        if (!state.project) return;
-        
-        const projectState = {
-          project: state.project,
-          timeline: state.timeline,
-          ui_state: {
-            currentTime: state.currentTime,
-            zoom: state.timelineZoom,
-            scroll: state.timelineScroll
-          }
-        };
-        
-        const assetManifest = state.mediaAssets.map(asset => ({
-          id: asset.id,
-          local_asset_id: asset.local_asset_id,
-          filename: asset.file_name
-        }));
-        
-        await TimelineService.saveRecoveryPoint(
-          state.project.id,
-          projectState,
-          assetManifest
-        );
-      },
-
-      // ============================================================================
-      // MEDIA MANAGEMENT ACTIONS
-      // ============================================================================
-
-    addMediaAsset: (asset) => {
-      set((state) => {
-        // Production-grade duplicate prevention with multiple checks
-        const existingAssetIndex = state.mediaAssets.findIndex((existing) => {
-          // Primary check: exact ID match
-          if (existing.id === asset.id) return true;
-          
-          // Secondary check: local asset ID match (for IndexedDB assets)
-          if (asset.local_asset_id && existing.local_asset_id === asset.local_asset_id) return true;
-          
-          // Tertiary check: R2 object key match (for cloud assets)
-          if (asset.r2_object_key && existing.r2_object_key === asset.r2_object_key && 
-              !asset.r2_object_key.startsWith('local_') && !asset.r2_object_key.startsWith('blob:')) return true;
-          
-          // Quaternary check: content-based matching for blob URLs and identical files
-          if (existing.file_name === asset.file_name && 
-              existing.file_size_bytes === asset.file_size_bytes &&
-              existing.content_type === asset.content_type &&
-              Math.abs((existing.duration_seconds || 0) - (asset.duration_seconds || 0)) < 0.1) return true;
-          
-          return false;
+    // Media management
+    addMediaAsset: async (asset) => {
+      try {
+        // First, save asset to database to get proper ID
+        const dbAsset = await VideoStudioService.createAsset({
+          fingerprint: asset.r2_object_key, // Use r2_object_key as fingerprint
+          original_filename: asset.file_name,
+          content_type: asset.content_type,
+          file_size_bytes: asset.file_size_bytes,
+          duration_seconds: asset.duration_seconds,
+          width: asset.dimensions?.width,
+          height: asset.dimensions?.height,
+          video_codec: asset.video_metadata?.codec,
+          audio_codec: asset.video_metadata?.codec, // Use same codec for audio
         });
 
-        if (existingAssetIndex !== -1) {
-          // Asset already exists - update it instead of adding duplicate
-          console.log('🔄 Asset already exists, updating instead of duplicating:', asset.id || asset.file_name);
-          const updatedAssets = [...state.mediaAssets];
-          updatedAssets[existingAssetIndex] = {
-            ...updatedAssets[existingAssetIndex],
-            ...asset,
-            // Preserve critical IDs to maintain references
-            id: updatedAssets[existingAssetIndex].id,
-            created_at: updatedAssets[existingAssetIndex].created_at,
-            updated_at: new Date().toISOString()
+        // Then update local state with database asset
+        set((state) => {
+          const newProject = {
+            ...state.project,
+            mediaAssets: [
+              ...state.project.mediaAssets,
+              {
+                ...asset,
+                id: dbAsset.id, // Use database-generated ID
+                created_at: dbAsset.created_at,
+                updated_at: dbAsset.updated_at,
+              },
+            ],
+            updatedAt: new Date(),
           };
           
-          return { mediaAssets: updatedAssets };
-        } else {
-          // New asset - add to collection
-          console.log('✅ Adding new asset to collection:', asset.id || asset.file_name);
-          return { mediaAssets: [...state.mediaAssets, asset] };
-        }
-      });
-      triggerAutoSave();
+          // Queue auto-save for project metadata
+          queueAutoSave(newProject);
+          
+          return { project: newProject };
+        });
+
+        console.log("✅ Asset saved to database:", dbAsset.id, asset.file_name);
+      } catch (error) {
+        console.error("❌ Failed to save asset to database:", error);
+        
+        // Fallback: add to local state only with warning
+        set((state) => {
+          const newProject = {
+            ...state.project,
+            mediaAssets: [
+              ...state.project.mediaAssets,
+              {
+                ...asset,
+                id: generateUUID(),
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+              },
+            ],
+            updatedAt: new Date(),
+          };
+          
+          return { project: newProject };
+        });
+      }
     },
 
-      removeMediaAsset: (id) => {
-      set((state) => {
-        // Production-grade removal with cascade cleanup
-        const assetToRemove = state.mediaAssets.find(asset => asset.id === id);
-        if (!assetToRemove) {
-          console.warn('🚫 Attempted to remove non-existent asset:', id);
-          return {};
-        }
-        
-        console.log('🗑️ Removing asset and cleaning up references:', assetToRemove.file_name);
-        
-        return {
-          mediaAssets: state.mediaAssets.filter((asset) => asset.id !== id),
-          selectedMediaId: state.selectedMediaId === id ? null : state.selectedMediaId
-        };
-      });
-        triggerAutoSave();
-      },
+    removeMediaAsset: (id) =>
+      set((state) => ({
+        project: {
+          ...state.project,
+          mediaAssets: state.project.mediaAssets.filter((asset) => asset.id !== id),
+          updatedAt: new Date(),
+        },
+      })),
 
     setSelectedMediaId: (id) => set({ selectedMediaId: id }),
 
-      refreshMediaAssets: async () => {
-        try {
-          const mediaAssets = await VideoProjectService.getUserVideoAssets();
-          set({ mediaAssets });
-        } catch (error) {
-          console.error('Error refreshing media assets:', error);
-        }
-      },
-
-      // Production-grade asset recovery and cleanup
-      recoverAndCleanupAssets: async () => {
-        const state = get();
-        console.log('🔧 Starting asset recovery and cleanup process...');
-
-        try {
-          // Step 1: Fetch fresh assets from database
-          const freshAssets = await VideoProjectService.getUserVideoAssets();
-          console.log(`📥 Fetched ${freshAssets.length} assets from database`);
-
-          // Step 2: Analyze current vs fresh assets
-          const currentAssetIds = new Set(state.mediaAssets.map(a => a.id));
-          const freshAssetIds = new Set(freshAssets.map(a => a.id));
-
-          // Find orphaned assets (in store but not in DB)
-          const orphanedAssets = state.mediaAssets.filter(asset => !freshAssetIds.has(asset.id));
-          
-          // Find missing assets (in DB but not in store)
-          const missingAssets = freshAssets.filter(asset => !currentAssetIds.has(asset.id));
-
-          // Step 3: Validate local asset integrity for local assets
-          const corruptedAssets: any[] = [];
-          const validatedAssets: any[] = [];
-          
-          for (const asset of freshAssets) {
-            if (asset.local_asset_id && asset.is_local_available) {
-              try {
-                const validation = await indexedDBManager.validateAssetIntegrity(asset.local_asset_id);
-                if (!validation.valid) {
-                  console.error(`🚫 Asset ${asset.file_name} is corrupted:`, validation.error);
-                  corruptedAssets.push({
-                    ...asset,
-                    _corruptionReason: validation.error,
-                    _missingChunks: validation.missingChunks
-                  });
-                } else {
-                  validatedAssets.push(asset);
-                }
-              } catch (error) {
-                console.error(`❌ Failed to validate asset ${asset.file_name}:`, error);
-                corruptedAssets.push({
-                  ...asset,
-                  _corruptionReason: 'Validation failed',
-                  _validationError: error
-                });
-              }
-            } else {
-              // Non-local assets are considered valid for now
-              validatedAssets.push(asset);
-            }
-          }
-
-          // Step 4: Clean up corrupted assets from IndexedDB
-          const indexedDbCleanup = await indexedDBManager.cleanupCorruptedAssets();
-          console.log(`🗑️ Cleaned up ${indexedDbCleanup.removed} corrupted assets from IndexedDB`);
-          if (indexedDbCleanup.errors.length > 0) {
-            console.warn('⚠️ Some cleanup errors occurred:', indexedDbCleanup.errors);
-          }
-
-          // Step 5: Update asset availability flags for corrupted assets in database
-          for (const corruptedAsset of corruptedAssets) {
-            try {
-              await supabase
-                .from('user_assets')
-                .update({ 
-                  is_local_available: false,
-                  local_storage_key: null 
-                })
-                .eq('id', corruptedAsset.id);
-              
-              console.log(`📝 Updated database for corrupted asset: ${corruptedAsset.file_name}`);
-            } catch (error) {
-              console.error(`❌ Failed to update corrupted asset ${corruptedAsset.file_name}:`, error);
-            }
-          }
-
-          // Step 6: Apply clean asset list to store
-          const cleanAssets = validatedAssets.filter(asset => !corruptedAssets.some(c => c.id === asset.id));
-          
-          set({ mediaAssets: cleanAssets });
-
-          // Generate comprehensive report
-          const stats = {
-            totalProcessed: freshAssets.length,
-            orphanedRemoved: orphanedAssets.length,
-            missingRecovered: missingAssets.length,
-            corruptedFound: corruptedAssets.length,
-            validAssets: cleanAssets.length,
-            indexedDbCleaned: indexedDbCleanup.removed
-          };
-
-          console.log(`📊 Asset recovery analysis complete:
-            - Total assets processed: ${stats.totalProcessed}
-            - Valid assets: ${stats.validAssets}
-            - Corrupted assets found: ${stats.corruptedFound}
-            - Orphaned assets removed: ${stats.orphanedRemoved}
-            - Missing assets recovered: ${stats.missingRecovered}
-            - IndexedDB cleanup: ${stats.indexedDbCleaned} removed`);
-
-          // Log detailed corruption information
-          if (corruptedAssets.length > 0) {
-            console.group('🚫 Corrupted Assets Details:');
-            corruptedAssets.forEach(asset => {
-              console.log(`- ${asset.file_name}: ${asset._corruptionReason}`);
-              if (asset._missingChunks?.length > 0) {
-                console.log(`  Missing chunks: ${asset._missingChunks.join(', ')}`);
-              }
-            });
-            console.groupEnd();
-          }
-
-          const finalMessage = stats.corruptedFound > 0 
-            ? `⚠️ Recovery completed with ${stats.corruptedFound} corrupted assets removed`
-            : `✅ Asset recovery completed successfully`;
-
-          console.log(`${finalMessage}:
-            - Final asset count: ${stats.validAssets}
-            - Corrupted/removed: ${stats.corruptedFound}
-            - System integrity: ${stats.validAssets > 0 ? 'Good' : 'Needs attention'}`);
-
-          return { 
-            success: true, 
-            stats,
-            corruptedAssets: corruptedAssets.map(a => ({
-              id: a.id,
-              fileName: a.file_name,
-              reason: a._corruptionReason,
-              missingChunks: a._missingChunks
-            }))
-          };
-
-        } catch (error) {
-          console.error('❌ Asset recovery failed:', error);
-          return { 
-            success: false, 
-            error: error instanceof Error ? error.message : 'Unknown error',
-            stats: { totalProcessed: 0, validAssets: 0, corruptedFound: 0 }
-          };
-        }
-      },
-
-      // Validate asset integrity
-      validateAssetIntegrity: async (assetId: string) => {
-        const state = get();
-        const asset = state.mediaAssets.find(a => a.id === assetId);
-        
-        if (!asset) {
-          return { valid: false, error: 'Asset not found in store' };
-        }
-
-        try {
-          // Basic structure validation
-          if (!asset.id || !asset.file_name || !asset.content_type) {
-            return { valid: false, error: 'Missing required asset properties' };
-          }
-
-          // Media info extraction validation
-          const mediaInfo = getMediaInfo(asset);
-          if (!mediaInfo.type || !mediaInfo.name) {
-            return { valid: false, error: 'Failed to extract media information' };
-          }
-
-          // Local asset availability check (if applicable)
-          if (asset.local_asset_id) {
-            try {
-              const storageInfo = await indexedDBManager.getStorageInfo();
-              // Additional checks could be added here
-            } catch (storageError) {
-              return { valid: false, error: 'Local storage validation failed' };
-            }
-          }
-
-          return { valid: true };
-
-        } catch (error) {
-          return { 
-            valid: false, 
-            error: error instanceof Error ? error.message : 'Validation error' 
-          };
-        }
-      },
-
-      // ============================================================================
-      // TRACK MANAGEMENT ACTIONS
-      // ============================================================================
-
-      addTrack: async (type) => {
-        const state = get();
-        if (!state.project) return;
-        
-        try {
-          const trackNumber = state.tracks.filter((t) => t.track_type === type).length + 1;
-          
-          const newTrack = await TimelineService.addTrack({
-            project_id: state.project.id,
-            track_type: type,
-            track_name: `${type.charAt(0).toUpperCase() + type.slice(1)} Track ${trackNumber}`,
-            track_order: state.tracks.length + 1,
-            volume: 1.0,
-            opacity: 1.0,
-            blend_mode: 'normal'
-          });
-          
-          if (newTrack) {
-            const enhancedTrack: EnhancedTimelineTrack = {
-              ...newTrack,
+    // Track management
+    addTrack: (type) =>
+      set((state) => {
+        const trackNumber = state.project.tracks.filter((t) => t.type === type).length + 1;
+        const newTrack: Track = {
+          id: generateUUID(),
+          type,
+          name: `${type === "video" ? "Video" : type === "audio" ? "Audio" : "Overlay"} Track ${trackNumber}`,
           clips: [],
-              height: type === 'video' ? 80 : 60
-            };
-            
-            set((state) => ({
-              tracks: [...state.tracks, enhancedTrack]
-            }));
-            
-            triggerAutoSave();
-          }
-        } catch (error) {
-          console.error('Error adding track:', error);
-        }
-      },
+          muted: false,
+          volume: 1,
+          locked: false,
+          visible: true,
+          height: type === "video" ? 80 : 60,
+          ...(type === "overlay" && {
+            opacity: 1,
+            blendMode: "normal" as const,
+          }),
+        };
 
-      removeTrack: async (id) => {
-        try {
-          await TimelineService.deleteTrack(id);
-      set((state) => ({
-            tracks: state.tracks.filter((track) => track.id !== id),
-            selectedTrackId: state.selectedTrackId === id ? null : state.selectedTrackId
-          }));
-          triggerAutoSave();
-          updateProjectDuration();
-        } catch (error) {
-          console.error('Error removing track:', error);
-        }
-      },
+        return {
+          project: {
+            ...state.project,
+            tracks: [...state.project.tracks, newTrack],
+            updatedAt: new Date(),
+          },
+        };
+      }),
 
-      updateTrack: async (id, updates) => {
-        try {
-          const updatedTrack = await TimelineService.updateTrack(id, updates);
-          if (updatedTrack) {
+    removeTrack: (id) =>
       set((state) => ({
-              tracks: state.tracks.map((track) =>
-                track.id === id ? { ...track, ...updatedTrack } : track
-              )
-            }));
-            triggerAutoSave();
-          }
-        } catch (error) {
-          console.error('Error updating track:', error);
-        }
-      },
+        project: {
+          ...state.project,
+          tracks: state.project.tracks.filter((track) => track.id !== id),
+          updatedAt: new Date(),
+        },
+      })),
+
+    updateTrack: (id, updates) =>
+      set((state) => ({
+        project: {
+          ...state.project,
+          tracks: state.project.tracks.map((track) =>
+            track.id === id ? { ...track, ...updates } : track
+          ),
+          updatedAt: new Date(),
+        },
+      })),
 
     setSelectedTrackId: (id) => set({ selectedTrackId: id }),
 
-      reorderTracks: async (fromIndex, toIndex) => {
-        const state = get();
-        const newTracks = [...state.tracks];
-        const [movedTrack] = newTracks.splice(fromIndex, 1);
-        newTracks.splice(toIndex, 0, movedTrack);
-        
-        // Update track order in database
-        for (let i = 0; i < newTracks.length; i++) {
-          await TimelineService.updateTrack(newTracks[i].id, { track_order: i + 1 });
-        }
-        
-        set({ tracks: newTracks });
-        triggerAutoSave();
-      },
+    // Clip management
+    addClip: (clip) =>
+      set((state) => {
+        const newClip: TimelineClip = {
+          ...clip,
+          id: generateUUID(), // Fixed: Use proper UUID instead of nanoid
+          muted: clip.muted ?? false, // Default to not muted
+        };
 
-      // ============================================================================
-      // CLIP MANAGEMENT ACTIONS
-      // ============================================================================
-
-      addClip: async (trackId, assetId, startTime, duration) => {
-        try {
-          const state = get();
-          const asset = state.mediaAssets.find(a => a.id === assetId);
-          if (!asset) return;
-          
-          const clipDuration = duration || asset.duration_seconds || 5;
-          
-          const newClip = await TimelineService.addClip({
-            track_id: trackId,
-            asset_id: assetId,
-            start_time: startTime,
-            end_time: startTime + clipDuration,
-            trim_start: 0,
-            trim_end: clipDuration,
-            volume: 1.0,
-            opacity: 1.0,
-            transform_data: {
-              position: { x: 0, y: 0 },
-              scale: { x: 1, y: 1 },
-              rotation: 0,
-              opacity: 1
-            },
-            playback_speed: 1.0
-          });
-          
-          if (newClip) {
-            const enhancedClip: EnhancedTimelineClip = {
-              ...newClip,
-              effects: [],
-              audioEffects: [],
-              textElements: [],
-              transitions: [],
-              keyframes: []
-            };
-            
-            set((state) => ({
-              tracks: state.tracks.map((track) =>
-                track.id === trackId
-                  ? { ...track, clips: [...track.clips, enhancedClip] }
+        const newProject = {
+            ...state.project,
+            tracks: state.project.tracks.map((track) =>
+              track.id === clip.trackId
+                ? { ...track, clips: [...track.clips, newClip] }
                 : track
-              )
-            }));
-            
-      triggerAutoSave();
-            updateProjectDuration();
-          }
-        } catch (error) {
-          console.error('Error adding clip:', error);
-        }
-    },
+            ),
+            updatedAt: new Date(),
+        };
 
-      removeClip: async (id) => {
-        try {
-          await TimelineService.deleteClip(id);
+        // Queue auto-save with clip data (only if asset exists)
+        if (newClip.mediaId) {
+          const autoSave = AutoSaveSystem.getInstance();
+          autoSave.queueSave(newProject.id, { 
+            type: 'clip', 
+            data: {
+              id: newClip.id,
+              project_id: newProject.id,
+              track_id: newClip.trackId,
+              asset_id: newClip.mediaId,
+              start_time: newClip.startTime,
+              end_time: newClip.endTime,
+              layer_index: 0,
+              trim_start: newClip.trimStart,
+              trim_end: newClip.trimEnd,
+              position_x: 0,
+              position_y: 0,
+              scale_x: 1,
+              scale_y: 1,
+              rotation: 0,
+              anchor_x: 0.5,
+              anchor_y: 0.5,
+              opacity: 1,
+              blend_mode: 'normal',
+              volume: newClip.volume,
+              muted: newClip.muted,
+              playback_rate: 1,
+              video_effects: [],
+              audio_effects: [],
+              motion_blur_enabled: false,
+              motion_blur_shutter_angle: 180,
+              quality_level: 'high',
+              tags: [],
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            } 
+          });
+          console.log(`🎬 Queued clip save: ${newClip.id} → asset: ${newClip.mediaId}`);
+        } else {
+          console.warn(`⚠️ Skipping clip save - no asset ID: ${newClip.id}`);
+        }
+
+        return {
+          project: newProject,
+        };
+      }),
+
+    removeClip: (id) =>
       set((state) => ({
-            tracks: state.tracks.map((track) => ({
+        project: {
+          ...state.project,
+          tracks: state.project.tracks.map((track) => ({
             ...track,
-              clips: track.clips.filter((clip) => clip.id !== id)
+            clips: track.clips.filter((clip) => clip.id !== id),
           })),
-            selectedClipId: state.selectedClipId === id ? null : state.selectedClipId
-      }));
-      triggerAutoSave();
-          updateProjectDuration();
-        } catch (error) {
-          console.error('Error removing clip:', error);
-        }
-    },
+          updatedAt: new Date(),
+        },
+      })),
 
-      updateClip: async (id, updates) => {
-        try {
-          const updatedClip = await TimelineService.updateClip(id, updates);
-          if (updatedClip) {
+    updateClip: (id, updates) =>
       set((state) => ({
-              tracks: state.tracks.map((track) => ({
+        project: {
+          ...state.project,
+          tracks: state.project.tracks.map((track) => ({
             ...track,
             clips: track.clips.map((clip) =>
-                  clip.id === id ? { ...clip, ...updatedClip } : clip
-                )
-              }))
-      }));
-      triggerAutoSave();
-            updateProjectDuration();
-          }
-        } catch (error) {
-          console.error('Error updating clip:', error);
-        }
-    },
+              clip.id === id ? { ...clip, ...updates } : clip
+            ),
+          })),
+          updatedAt: new Date(),
+        },
+      })),
 
     setSelectedClipId: (id) => set({ selectedClipId: id }),
 
-      splitClip: async (clipId, splitTime) => {
-        try {
-          const result = await TimelineService.splitClip(clipId, splitTime);
-          if (result && result.length === 2) {
-            const [firstClip, secondClip] = result;
-            
-            set((state) => ({
-              tracks: state.tracks.map((track) => ({
-                ...track,
-                clips: track.clips
-                  .filter((clip) => clip.id !== clipId)
-                  .concat([
-                    { ...firstClip, effects: [], audioEffects: [], textElements: [], transitions: [], keyframes: [] },
-                    { ...secondClip, effects: [], audioEffects: [], textElements: [], transitions: [], keyframes: [] }
-                  ])
-              })),
-              selectedClipId: firstClip.id
-            }));
-            
-            triggerAutoSave();
-          }
-        } catch (error) {
-          console.error('Error splitting clip:', error);
-        }
-      },
-
-      trimClip: async (clipId, trimStart, trimEnd) => {
-        await get().updateClip(clipId, { 
-          trim_start: trimStart,
-          ...(trimEnd && { trim_end: trimEnd })
-        });
-      },
-
-      moveClip: async (clipId, newTrackId, newStartTime) => {
-        const state = get();
-        let clipToMove: EnhancedTimelineClip | null = null;
+    // Split clip functionality
+    splitClip: (clipId, splitTime) =>
+      set((state) => {
+        const project = state.project;
         
-        // Find the clip
-        for (const track of state.tracks) {
-          const clip = track.clips.find(c => c.id === clipId);
-          if (clip) {
-            clipToMove = clip;
-            break;
-          }
-        }
-        
-        if (!clipToMove) return;
-        
-        const duration = clipToMove.end_time - clipToMove.start_time;
-        
-        await get().updateClip(clipId, {
-          track_id: newTrackId,
-          start_time: newStartTime,
-          end_time: newStartTime + duration
-        });
-      },
-
-      duplicateClip: async (clipId) => {
-        const state = get();
-        let clipToDuplicate: EnhancedTimelineClip | null = null;
+        // Find the clip to split
+        let clipToSplit: TimelineClip | null = null;
         let trackId: string | null = null;
         
-        // Find the clip
-        for (const track of state.tracks) {
+        for (const track of project.tracks) {
           const clip = track.clips.find(c => c.id === clipId);
           if (clip) {
-            clipToDuplicate = clip;
+            clipToSplit = clip;
             trackId = track.id;
             break;
           }
         }
         
-        if (!clipToDuplicate || !trackId) return;
-        
-        const duration = clipToDuplicate.end_time - clipToDuplicate.start_time;
-        const newStartTime = clipToDuplicate.end_time + 0.1; // Small gap
-        
-        await get().addClip(trackId, clipToDuplicate.asset_id, newStartTime, duration);
-      },
-
-      // ============================================================================
-      // EFFECTS MANAGEMENT ACTIONS
-      // ============================================================================
-
-      addClipEffect: async (clipId, effectType, effectName, parameters = {}) => {
-        try {
-          const effect = await TimelineService.addClipEffect({
-            clip_id: clipId,
-            effect_type: effectType,
-            effect_name: effectName,
-            parameters,
-            is_enabled: true,
-            effect_order: 0
-          });
-          
-          if (effect) {
-            set((state) => ({
-              tracks: state.tracks.map((track) => ({
-                ...track,
-                clips: track.clips.map((clip) =>
-                  clip.id === clipId
-                    ? { ...clip, effects: [...(clip.effects || []), effect] }
-                    : clip
-                )
-              }))
-            }));
-            triggerAutoSave();
-          }
-        } catch (error) {
-          console.error('Error adding clip effect:', error);
+        if (!clipToSplit || !trackId) {
+          console.warn('Clip not found for splitting:', clipId);
+          return state;
         }
-      },
-
-      removeClipEffect: async (effectId) => {
-        // Implementation for removing effects
-        triggerAutoSave();
-      },
-
-      updateClipEffect: async (effectId, parameters) => {
-        // Implementation for updating effects
-        triggerAutoSave();
-      },
-
-      addAudioEffect: async (clipId, effectType, effectName, parameters = {}) => {
-        try {
-          const effect = await TimelineService.addAudioEffect({
-            clip_id: clipId,
-            effect_type: effectType,
-            effect_name: effectName,
-            parameters,
-            is_enabled: true,
-            effect_order: 0
-          });
-          
-          if (effect) {
-            set((state) => ({
-              tracks: state.tracks.map((track) => ({
-                ...track,
-                clips: track.clips.map((clip) =>
-                  clip.id === clipId
-                    ? { ...clip, audioEffects: [...(clip.audioEffects || []), effect] }
-                    : clip
-                )
-              }))
-            }));
-            triggerAutoSave();
-          }
-        } catch (error) {
-          console.error('Error adding audio effect:', error);
+        
+        // Validate split time is within clip bounds
+        if (splitTime <= clipToSplit.startTime || splitTime >= clipToSplit.endTime) {
+          console.warn('Split time is outside clip bounds');
+          return state;
         }
-      },
-
-      addTextElement: async (clipId, text, style = {}) => {
-        try {
-          const textElement = await TimelineService.addTextElement({
-            clip_id: clipId,
-            text_content: text,
-            font_family: style.fontFamily || 'Arial',
-            font_size: style.fontSize || 24,
-            color: style.color || '#FFFFFF',
-            position: style.position || { x: 50, y: 50 },
-            size: style.size || { width: 200, height: 100 }
-          });
-          
-          if (textElement) {
-            set((state) => ({
-              tracks: state.tracks.map((track) => ({
+        
+        // Calculate split positions
+        const originalDuration = clipToSplit.endTime - clipToSplit.startTime;
+        const timeFromStart = splitTime - clipToSplit.startTime;
+        const trimDuration = clipToSplit.trimEnd - clipToSplit.trimStart;
+        
+        // Calculate trim positions for split
+        const trimSplitPoint = clipToSplit.trimStart + (timeFromStart / originalDuration) * trimDuration;
+        
+        // Create first clip (from start to split)
+        const firstClip: TimelineClip = {
+          ...clipToSplit,
+          id: generateUUID(), // Fixed: Use proper UUID instead of nanoid
+          endTime: splitTime,
+          trimEnd: trimSplitPoint,
+        };
+        
+        // Create second clip (from split to end)
+        const secondClip: TimelineClip = {
+          ...clipToSplit,
+          id: generateUUID(), // Fixed: Use proper UUID instead of nanoid
+          startTime: splitTime,
+          trimStart: trimSplitPoint,
+        };
+        
+        // Update the project with new clips
+        const updatedTracks = project.tracks.map(track => {
+          if (track.id === trackId) {
+            // Remove original clip and add the two new clips
+            const clipsWithoutOriginal = track.clips.filter(c => c.id !== clipId);
+            return {
               ...track,
-                clips: track.clips.map((clip) =>
-                  clip.id === clipId
-                    ? { ...clip, textElements: [...(clip.textElements || []), textElement] }
-                    : clip
-                )
-              }))
-            }));
-            triggerAutoSave();
+              clips: [...clipsWithoutOriginal, firstClip, secondClip]
+            };
           }
-        } catch (error) {
-          console.error('Error adding text element:', error);
-        }
-      },
-
-      addTransition: async (fromClipId, toClipId, transitionType, duration) => {
-        try {
-          const transition = await TimelineService.addTransition({
-            from_clip_id: fromClipId,
-            to_clip_id: toClipId,
-            transition_type: transitionType,
-            duration,
-            easing_function: 'ease-in-out',
-            custom_properties: {}
-          });
-          
-          if (transition) {
-            triggerAutoSave();
-          }
-        } catch (error) {
-          console.error('Error adding transition:', error);
-        }
-      },
-
-      // ============================================================================
-      // TIMELINE CONTROL ACTIONS
-      // ============================================================================
-
-      setTimelineZoom: (zoom) => {
-        set({ timelineZoom: zoom });
-        triggerTimelineSave();
-      },
-      
-      setTimelineScroll: (scroll) => {
-        set({ timelineScroll: scroll });
-        triggerTimelineSave();
-      },
-      
-      setSnapToGrid: (snap) => {
-        set({ snapToGrid: snap });
-        triggerTimelineSave();
-      },
-      
-      setGridSize: (size) => {
-        set({ gridSize: size });
-        triggerTimelineSave();
-      },
-
-      // ============================================================================
-      // SELECTION MANAGEMENT ACTIONS
-      // ============================================================================
-
-      selectMultipleClips: (clipIds) => {
-        set({ selectedKeyframes: clipIds });
-      },
-      
-      clearSelection: () => {
-        set({ 
-          selectedClipId: null, 
-          selectedTrackId: null, 
-          selectedMediaId: null, 
-          selectedKeyframes: [] 
+          return track;
         });
-      },
-      
-      selectAll: () => {
-        const state = get();
-        const allClipIds = state.tracks.flatMap(track => track.clips.map(clip => clip.id));
-        set({ selectedKeyframes: allClipIds });
-      },
+        
+        return {
+          project: {
+            ...project,
+            tracks: updatedTracks,
+            updatedAt: new Date(),
+          },
+          selectedClipId: firstClip.id, // Select the first clip after split
+        };
+      }),
 
-      // ============================================================================
-      // DIALOG CONTROL ACTIONS
-      // ============================================================================
+    // Timeline controls
+    setTimelineZoom: (zoom) => set({ timelineZoom: zoom }),
+    setTimelineScroll: (scroll) => set({ timelineScroll: scroll }),
 
+    // Dialog controls
     setProjectDialogOpen: (open) => set({ projectDialogOpen: open }),
     setExportDialogOpen: (open) => set({ exportDialogOpen: open }),
     setKeyDialogOpen: (open) => set({ keyDialogOpen: open }),
-      setMediaGalleryOpen: (open) => set({ mediaGalleryOpen: open }),
 
-      // ============================================================================
-      // AI GENERATION ACTIONS
-      // ============================================================================
-
+    // AI generation
     setIsGenerating: (generating) => set({ isGenerating: generating }),
     setGenerationProgress: (progress) => set({ generationProgress: progress }),
-      setGenerationStatus: (status) => set({ generationStatus: status }),
 
-      // ============================================================================
-      // DEVICE SYNC ACTIONS
-      // ============================================================================
+    // Project management
+    saveProject: async () => {
+      const state = get();
+      try {
+        // Convert store format to database format and save
+        const timelineData: TimelineData = {
+          project: {
+            id: state.project.id,
+            title: state.project.name,
+            resolution_width: state.project.resolution.width,
+            resolution_height: state.project.resolution.height,
+            fps: state.project.fps,
+            duration_seconds: state.project.duration,
+            updated_at: new Date().toISOString(),
+            created_at: state.project.createdAt.toISOString(),
+          } as VideoStudioProject,
+          tracks: state.project.tracks.map(track => ({
+            id: track.id,
+            project_id: state.project.id,
+            name: track.name,
+            type: track.type,
+            position: state.project.tracks.indexOf(track),
+            height: track.height,
+            volume: track.volume,
+            opacity: track.opacity || 1.0,
+            muted: track.muted,
+            locked: track.locked,
+            visible: track.visible,
+            blend_mode: track.blendMode || 'normal',
+            pan: 0.0,
+            solo: false,
+            color: '#3b82f6',
+            audio_effects: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })),
+          clips: state.project.tracks.flatMap(track => 
+            track.clips.map(clip => ({
+              id: clip.id,
+              project_id: state.project.id,
+              track_id: track.id,
+              asset_id: clip.mediaId || undefined,
+              start_time: clip.startTime,
+              end_time: clip.endTime,
+              layer_index: 0,
+              trim_start: clip.trimStart,
+              trim_end: clip.trimEnd,
+              position_x: 0,
+              position_y: 0,
+              scale_x: 1.0,
+              scale_y: 1.0,
+              rotation: 0.0,
+              anchor_x: 0.5,
+              anchor_y: 0.5,
+              opacity: 1.0,
+              blend_mode: 'normal',
+              volume: clip.volume,
+              muted: clip.muted,
+              playback_rate: 1.0,
+              video_effects: [],
+              audio_effects: [],
+              motion_blur_enabled: false,
+              motion_blur_shutter_angle: 180.0,
+              quality_level: 'high',
+              tags: [],
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }))
+          ),
+          keyframes: [],
+          transitions: [],
+          assets: state.project.mediaAssets.map(asset => ({
+            id: asset.id,
+            user_id: asset.user_id,
+            fingerprint: asset.r2_object_key,
+            original_filename: asset.file_name,
+            content_type: asset.content_type,
+            file_size_bytes: asset.file_size_bytes,
+            duration_seconds: asset.duration_seconds,
+            width: asset.dimensions?.width,
+            height: asset.dimensions?.height,
+            fps: asset.video_metadata?.fps,
+            video_codec: asset.video_metadata?.codec,
+            audio_codec: asset.video_metadata?.codec,
+            bitrate_kbps: asset.video_metadata?.bitrate ? parseInt(asset.video_metadata.bitrate) : undefined,
+            audio_channels: asset.video_metadata?.audio_channels || 2,
+            audio_sample_rate: asset.video_metadata?.audio_sample_rate || 44100,
+            analysis_status: 'pending',
+            proxy_status: 'pending',
+            thumbnail_status: 'pending',
+            usage_count: 0,
+            projects_used_in: [state.project.id],
+            proxy_cache_keys: {},
+            created_at: asset.created_at,
+            updated_at: asset.updated_at,
+            last_accessed_at: new Date().toISOString(),
+          })),
+        };
 
-      updateDeviceActivity: async () => {
-        // Device activity tracking removed in simplified user-only approach
-          set({ deviceSyncStatus: 'synced' });
-      },
-
-      checkSyncStatus: async () => {
-        // Sync status checking simplified in user-only approach
-          set({
-          availableDevices: 1, // Single user, single device
-          deviceSyncStatus: 'synced'
-          });
-      },
-
-      resolveConflicts: async () => {
-        // Implementation for conflict resolution
-        set({ deviceSyncStatus: 'synced' });
-      },
-
-      // ============================================================================
-      // IMPORT/EXPORT ACTIONS
-      // ============================================================================
-
-      exportProject: async (format, settings = {}) => {
-        const state = get();
-        if (!state.project) return;
+        // Save to database via VideoStudioService
+        await VideoStudioService.updateProjectTimeline(state.project.id, timelineData);
         
-        set({ exportDialogOpen: false });
-        // Implementation for project export
-      },
-
-      importMedia: async (files) => {
-        set({ isLoading: true });
-        try {
-          for (const file of files) {
-            const result = await MediaAssetService.uploadMediaAsset(file);
-            if (result.success && result.asset) {
-              get().addMediaAsset(result.asset);
-            }
-          }
+        // Queue auto-save for background persistence
+        const autoSave = AutoSaveSystem.getInstance();
+        autoSave.queueSave(state.project.id, { type: 'timeline', data: timelineData });
+        
+        console.log("✅ Project saved successfully:", state.project.id);
       } catch (error) {
-          console.error('Error importing media:', error);
-        } finally {
-          set({ isLoading: false });
+        console.error("❌ Failed to save project:", error);
+        throw error;
       }
     },
 
-      // ============================================================================
-      // HISTORY/UNDO ACTIONS
-      // ============================================================================
+    loadProject: async (projectId) => {
+      try {
+        const timelineData = await VideoStudioService.getTimelineData(projectId);
+        
+        // Convert database format to store format
+        const videoProject: VideoProject = {
+          id: timelineData.project.id,
+          name: timelineData.project.title,
+          resolution: {
+            width: timelineData.project.resolution_width,
+            height: timelineData.project.resolution_height,
+          },
+          fps: timelineData.project.fps,
+          duration: timelineData.project.duration_seconds,
+          tracks: timelineData.tracks.map(track => ({
+            id: track.id,
+            type: track.type as "video" | "audio" | "overlay",
+            name: track.name,
+            clips: timelineData.clips
+              .filter(clip => clip.track_id === track.id)
+              .map(clip => ({
+                id: clip.id,
+                mediaId: clip.asset_id || '',
+                trackId: clip.track_id,
+                startTime: clip.start_time,
+                endTime: clip.end_time,
+                trimStart: clip.trim_start,
+                trimEnd: clip.trim_end || clip.end_time,
+                volume: clip.volume,
+                muted: clip.muted,
+                effects: [] // TODO: Map effects
+              })),
+            muted: track.muted,
+            volume: track.volume,
+            locked: track.locked,
+            visible: track.visible,
+            height: track.height,
+            opacity: track.opacity,
+            blendMode: track.blend_mode as any
+          })),
+          mediaAssets: timelineData.assets.map(asset => ({
+            id: asset.id,
+            user_id: asset.user_id,
+            title: asset.original_filename,
+            file_name: asset.original_filename,
+            source_studio: 'video-studio',
+            tags: [],
+            r2_object_key: asset.fingerprint,
+            content_type: asset.content_type,
+            file_size_bytes: asset.file_size_bytes,
+            duration_seconds: asset.duration_seconds,
+            dimensions: asset.width && asset.height ? {
+              width: asset.width,
+              height: asset.height
+            } : undefined,
+            video_metadata: asset.fps ? {
+              fps: asset.fps,
+              codec: asset.video_codec,
+              bitrate: asset.bitrate_kbps?.toString(),
+              audio_channels: asset.audio_channels,
+              audio_sample_rate: asset.audio_sample_rate
+            } : undefined,
+            created_at: asset.created_at,
+            updated_at: asset.updated_at
+          })),
+          createdAt: new Date(timelineData.project.created_at),
+          updatedAt: new Date(timelineData.project.updated_at),
+        };
 
-      undo: async () => {
-        // Implementation for undo functionality
-      },
-
-      redo: async () => {
-        // Implementation for redo functionality
-      },
-
-      canUndo: () => {
-        // Implementation for undo check
-        return false;
-      },
-
-      canRedo: () => {
-        // Implementation for redo check
-        return false;
+        // Update store state
+        set({ project: videoProject });
+        
+        console.log("✅ Project loaded successfully:", projectId);
+      } catch (error) {
+        console.error("❌ Failed to load project:", error);
+        throw error;
       }
+    },
+
+    exportProject: async (format) => {
+      const state = get();
+      set({ exportDialogOpen: true });
+      try {
+      // TODO: Implement project export using Remotion
+        console.log("🎬 Exporting project:", state.project.id, "format:", format);
+        
+        // For now, just record the export action
+        await VideoStudioService.recordAction(
+          state.project.id,
+          'project_settings',
+          { action: 'export', format },
+          undefined
+        );
+      } catch (error) {
+        console.error("❌ Export failed:", error);
+        throw error;
+      }
+    },
   };
 }); 
