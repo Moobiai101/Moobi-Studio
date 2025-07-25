@@ -120,7 +120,17 @@ export default function MyAssetsPage() {
       const a = document.createElement('a');
       a.style.display = 'none';
       a.href = url;
-      a.download = asset.file_name || `asset-${asset.id}.${asset.content_type.split('/')[1] || 'jpg'}`;
+      
+      // Safely extract file extension from content_type
+      let extension = 'jpg'; // default extension
+      if (asset.content_type && typeof asset.content_type === 'string') {
+        const parts = asset.content_type.split('/');
+        if (parts.length > 1 && parts[1]) {
+          extension = parts[1];
+        }
+      }
+      
+      a.download = asset.file_name || `asset-${asset.id}.${extension}`;
       document.body.appendChild(a);
       a.click();
       
@@ -187,13 +197,18 @@ export default function MyAssetsPage() {
 
   // Format date for display
   const formatDate = (dateString: string): string => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (error) {
+      // Return a safe default format if date parsing fails
+      return 'Invalid date, Unknown time';
+    }
   };
 
   // Filter assets based on active tab

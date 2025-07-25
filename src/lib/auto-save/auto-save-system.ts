@@ -76,6 +76,7 @@ export class AutoSaveSystem {
   private autoSaveIntervals = new Map<string, NodeJS.Timeout>();
   private callbacks: AutoSaveCallbacks = {};
   private isOnline = navigator.onLine;
+  private performanceMonitoringInterval: NodeJS.Timeout | null = null;
   private performanceMetrics = {
     totalSaves: 0,
     successfulSaves: 0,
@@ -573,14 +574,15 @@ export class AutoSaveSystem {
    */
   private setupPerformanceMonitoring(): void {
     // Log performance metrics every 5 minutes
-    setInterval(() => {
+    this.performanceMonitoringInterval = setInterval(() => {
       console.log('📊 Auto-save performance metrics:', {
         ...this.performanceMetrics,
         successRate: this.performanceMetrics.totalSaves > 0 
           ? (this.performanceMetrics.successfulSaves / this.performanceMetrics.totalSaves * 100).toFixed(2) + '%'
           : '0%',
+        avgSaveTime: `${this.performanceMetrics.averageSaveTime.toFixed(2)}ms`
       });
-    }, 5 * 60 * 1000);
+    }, 5 * 60 * 1000); // 5 minutes
   }
 
   /**
@@ -594,18 +596,26 @@ export class AutoSaveSystem {
    * Cleanup all resources
    */
   cleanup(): void {
-    // Clear all intervals and timers
-    for (const interval of this.autoSaveIntervals.values()) {
-      clearInterval(interval);
-    }
-    for (const timer of this.debounceTimers.values()) {
-      clearTimeout(timer);
+    // Stop all auto-save intervals
+    this.autoSaveIntervals.forEach((interval) => clearInterval(interval));
+    this.autoSaveIntervals.clear();
+
+    // Clear all debounce timers
+    this.debounceTimers.forEach((timer) => clearTimeout(timer));
+    this.debounceTimers.clear();
+
+    // Clear performance monitoring interval
+    if (this.performanceMonitoringInterval) {
+      clearInterval(this.performanceMonitoringInterval);
+      this.performanceMonitoringInterval = null;
     }
 
-    // Clear all state
+    // Clear save states
     this.saveStates.clear();
-    this.autoSaveIntervals.clear();
-    this.debounceTimers.clear();
+
+    // Remove event listeners
+    window.removeEventListener('online', this.handleNetworkChange);
+    window.removeEventListener('offline', this.handleNetworkChange);
 
     console.log('🧹 Auto-save system cleaned up');
   }

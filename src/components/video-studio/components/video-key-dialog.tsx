@@ -14,20 +14,50 @@ import {
   Check, 
   X,
   ExternalLink,
-  AlertTriangle
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  Loader2
 } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
+
+// Simple encryption/decryption functions for basic obfuscation
+// NOTE: This is NOT secure encryption - it's just basic obfuscation
+// In production, API keys should be stored server-side or use proper encryption
+const encodeKey = (key: string): string => {
+  try {
+    return btoa(key.split('').reverse().join(''));
+  } catch {
+    return '';
+  }
+};
+
+const decodeKey = (encoded: string): string => {
+  try {
+    return atob(encoded).split('').reverse().join('');
+  } catch {
+    return '';
+  }
+};
 
 interface VideoKeyDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+interface ApiKeys {
+  falAi: string;
+  openai: string;
+  elevenlabs: string;
+  replicate: string;
+}
+
 export function VideoKeyDialog({ open, onOpenChange }: VideoKeyDialogProps) {
-  const [apiKeys, setApiKeys] = useState({
-    falAi: localStorage.getItem("fal_ai_key") || "",
-    openai: localStorage.getItem("openai_key") || "",
-    elevenlabs: localStorage.getItem("elevenlabs_key") || "",
-    replicate: localStorage.getItem("replicate_key") || "",
+  const [apiKeys, setApiKeys] = useState<ApiKeys>({
+    falAi: decodeKey(localStorage.getItem("fal_ai_key_encoded") || ""),
+    openai: decodeKey(localStorage.getItem("openai_key_encoded") || ""),
+    elevenlabs: decodeKey(localStorage.getItem("elevenlabs_key_encoded") || ""),
+    replicate: decodeKey(localStorage.getItem("replicate_key_encoded") || ""),
   });
 
   const [showKeys, setShowKeys] = useState({
@@ -104,12 +134,14 @@ export function VideoKeyDialog({ open, onOpenChange }: VideoKeyDialogProps) {
   };
 
   const saveApiKeys = () => {
-    // Save to localStorage (in production, this should be more secure)
+    // Save encoded keys to localStorage
+    // WARNING: This is NOT secure - API keys should be stored server-side in production
     Object.entries(apiKeys).forEach(([provider, key]) => {
+      const storageKey = `${provider.replace(/([A-Z])/g, '_$1').toLowerCase()}_key_encoded`;
       if (key) {
-        localStorage.setItem(`${provider.replace(/([A-Z])/g, '_$1').toLowerCase()}_key`, key);
+        localStorage.setItem(storageKey, encodeKey(key));
       } else {
-        localStorage.removeItem(`${provider.replace(/([A-Z])/g, '_$1').toLowerCase()}_key`);
+        localStorage.removeItem(storageKey);
       }
     });
     
