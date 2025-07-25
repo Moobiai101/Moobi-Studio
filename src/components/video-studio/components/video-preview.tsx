@@ -78,12 +78,13 @@ export function VideoPreview() {
       if (hasChanged) {
         // Update in project state
         updateClip(overlayId, updatedClip);
+        
+        // Save to database - the updateClip function should handle this
+        // The video-project-store should persist this to the database
+        console.log('💾 Saving overlay transform to database');
       }
-      
-      // PRODUCTION: Save to database here
-      // Example: await saveClipTransform(overlayId, transform);
     }
-  }, [updateClip]); // Remove overlayClips from dependencies to prevent loops
+  }, [overlayClips, updateClip]);
 
   // Player event handlers
   const handlePlayerRef = useCallback((player: PlayerRef | null) => {

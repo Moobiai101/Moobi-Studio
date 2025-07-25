@@ -94,7 +94,20 @@ export function VideoProjectProvider({
                     trimEnd: clip.trim_end || clip.end_time,
                     volume: clip.volume,
                     muted: clip.muted,
-                    effects: [] // TODO: Map video_effects and audio_effects
+                    effects: [
+                      ...(clip.video_effects || []).map((effect: any) => ({
+                        id: effect.id,
+                        type: effect.type,
+                        params: effect.params || {}
+                      })),
+                      ...(clip.audio_effects || []).map((effect: any) => ({
+                        id: effect.id,
+                        type: effect.type,
+                        params: effect.params || {}
+                      }))
+                    ],
+                    // Add overlay transform if it exists
+                    overlayTransform: clip.overlay_transform || undefined
                   })),
                 muted: track.muted,
                 volume: track.volume,
@@ -218,7 +231,20 @@ export function VideoProjectProvider({
                   trimEnd: clip.trim_end || clip.end_time,
                   volume: clip.volume,
                   muted: clip.muted,
-                  effects: [] // TODO: Map video_effects and audio_effects
+                  effects: [
+                    ...(clip.video_effects || []).map((effect: any) => ({
+                      id: effect.id,
+                      type: effect.type,
+                      params: effect.params || {}
+                    })),
+                    ...(clip.audio_effects || []).map((effect: any) => ({
+                      id: effect.id,
+                      type: effect.type,
+                      params: effect.params || {}
+                    }))
+                  ],
+                  // Add overlay transform if it exists
+                  overlayTransform: clip.overlay_transform || undefined
                 }))
               ,
               muted: track.muted,
