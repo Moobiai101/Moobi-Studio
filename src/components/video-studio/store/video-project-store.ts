@@ -462,19 +462,48 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
         },
       })),
 
-    updateClip: (id, updates) =>
-      set((state) => ({
-        project: {
-          ...state.project,
-          tracks: state.project.tracks.map((track) => ({
-            ...track,
-            clips: track.clips.map((clip) =>
-              clip.id === id ? { ...clip, ...updates } : clip
-            ),
-          })),
-          updatedAt: new Date(),
-        },
-      })),
+    updateClip: async (clipId: string, updates: Partial<TimelineClip>) => {
+        set((state) => ({
+          project: {
+            ...state.project,
+            tracks: state.project.tracks.map((track) => ({
+              ...track,
+              clips: track.clips.map((clip) =>
+                clip.id === clipId ? { ...clip, ...updates } : clip
+              ),
+            })),
+          },
+        }));
+        
+        // Auto-save after clip update
+        const { project } = get();
+        const autoSave = AutoSaveSystem.getInstance();
+        
+        // Save clip updates to database
+        try {
+          const clipData: any = {
+            ...updates,
+            // Include overlay transform if present
+            overlay_transform: updates.overlayTransform || undefined
+          };
+          
+          // Remove internal properties before saving
+          delete clipData.overlayTransform;
+          delete clipData.mediaId;
+          delete clipData.trackId;
+          
+          await VideoStudioService.updateClip(clipId, clipData);
+          console.log('✅ Clip updated in database:', clipId);
+        } catch (error) {
+          console.error('❌ Failed to update clip in database:', error);
+        }
+        
+        await autoSave.trackChange(project.id, 'clip', {
+          action: 'update',
+          clipId,
+          updates
+        });
+      },
 
     setSelectedClipId: (id) => set({ selectedClipId: id }),
 

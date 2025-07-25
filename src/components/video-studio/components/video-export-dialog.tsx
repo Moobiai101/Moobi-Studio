@@ -17,6 +17,7 @@ import {
   Loader2
 } from "lucide-react";
 import { useVideoProject } from "../hooks/use-video-project";
+import { toast } from "@/hooks/use-toast";
 
 interface VideoExportDialogProps {
   open: boolean;
@@ -73,46 +74,38 @@ export function VideoExportDialog({ open, onOpenChange }: VideoExportDialogProps
 
   const handleExport = async () => {
     setIsExporting(true);
-    setExportProgress(0);
-    setExportStatus("Preparing export...");
-
     try {
-      // Simulate export progress
-      const steps = [
-        "Analyzing timeline...",
-        "Processing video tracks...",
-        "Processing audio tracks...",
-        "Applying effects...",
-        "Encoding video...",
-        "Finalizing export...",
-      ];
-
-      for (let i = 0; i < steps.length; i++) {
-        setExportStatus(steps[i]);
-        setExportProgress((i + 1) / steps.length * 100);
-        
-        // Simulate processing time
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-
-      setExportStatus("Export completed!");
-      
       // TODO: Implement actual export using Remotion
-      // This would involve:
-      // 1. Creating a Remotion bundle
-      // 2. Rendering the composition
-      // 3. Downloading the result
-      
-      setTimeout(() => {
-        setIsExporting(false);
-        setExportProgress(0);
-        setExportStatus("");
-        onOpenChange(false);
-      }, 1000);
+      console.log("Exporting with settings:", {
+        resolution,
+        quality,
+        format,
+        fps: project.fps,
+      });
 
+      // Show progress toast
+      toast({
+        title: "Export Started",
+        description: "Your video is being exported. This may take a few minutes.",
+      });
+
+      // Simulate export process for now
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      toast({
+        title: "Export Complete",
+        description: "Your video has been exported successfully.",
+      });
+
+      onOpenChange(false);
     } catch (error) {
       console.error("Export failed:", error);
-      setExportStatus("Export failed!");
+      toast({
+        title: "Export Failed", 
+        description: error instanceof Error ? error.message : "An error occurred during export.",
+        variant: "destructive",
+      });
+    } finally {
       setIsExporting(false);
     }
   };

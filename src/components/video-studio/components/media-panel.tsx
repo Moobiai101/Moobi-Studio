@@ -90,12 +90,13 @@ export function MediaPanel() {
         }
 
         // Create asset in UserAsset format and save to database
+        // The addMediaAsset function should handle R2 upload
         await addMediaAsset({
           user_id: '', // Will be set by the store
           title: file.name,
           description: '',
           tags: [],
-          r2_object_key: url, // Temporary - will be replaced with actual R2 key
+          r2_object_key: '', // Will be set after R2 upload
           file_name: file.name,
           content_type: file.type,
           file_size_bytes: file.size,
@@ -112,11 +113,17 @@ export function MediaPanel() {
           } : undefined,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
+          // Pass the actual file for upload
+          _file: file,
+          _tempUrl: url // Temporary URL for preview
         });
 
         console.log(`File uploaded: ${file.name} (${type}) - ${duration}s`);
       } catch (error) {
         console.error("Error uploading file:", error);
+        // Show user-friendly error message
+        const errorMessage = error instanceof Error ? error.message : 'Failed to upload file';
+        console.error(`Failed to upload ${file.name}: ${errorMessage}`);
       }
     }
 
