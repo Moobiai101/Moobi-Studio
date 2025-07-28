@@ -31,14 +31,13 @@ export class VideoStudioService {
   // =====================================================
   
   /**
-   * Get all projects for the current user with overview stats
+   * Get all projects for the current authenticated user
    */
   static async getUserProjects(): Promise<ProjectOverview[]> {
     try {
+      // **SECURITY FIX: Use secure function that enforces user filtering**
       const { data, error } = await supabase
-        .from('video_studio_project_overview')
-        .select('*')
-        .order('last_opened_at', { ascending: false })
+        .rpc('get_user_project_overview')
         .limit(50); // Limit for performance
       
       if (error) throw error;
@@ -296,35 +295,45 @@ export class VideoStudioService {
   // =====================================================
   
   /**
-   * Get complete timeline data for a project
+   * Get complete timeline data for a project with proper error handling
    */
   static async getTimelineData(projectId: string): Promise<TimelineData> {
     try {
-      // Use the optimized view for timeline data
-      const { data: timelineClips, error: clipsError } = await supabase
-        .from('video_studio_timeline_data')
-        .select('*')
-        .eq('project_id', projectId);
-      
-      if (clipsError) throw clipsError;
-      
       // Get other timeline components
       const [
-        { data: project },
-        { data: tracks },
+        { data: project, error: projectError },
+        { data: tracks, error: tracksError },
+        { data: timelineClips, error: clipsError },
+      ] = await Promise.all([
+        supabase.from('video_studio_projects').select('*').eq('id', projectId).single(),
+        supabase.from('video_studio_tracks').select('*').eq('project_id', projectId).order('position'),
+        supabase.from('video_studio_timeline_data').select('*').eq('project_id', projectId),
+      ]);
+      
+      // **FIX: Handle project access errors properly**
+      if (projectError || !project) {
+        if (projectError?.code === 'PGRST116') {
+          throw new Error(`Project ${projectId} not found or access denied`);
+        }
+        throw projectError || new Error('Project data is null');
+      }
+      
+      if (tracksError) throw tracksError;
+      if (clipsError) throw clipsError;
+      
+      // Get additional timeline data
+      const [
         { data: keyframes },
         { data: transitions },
         { data: assets }
       ] = await Promise.all([
-        supabase.from('video_studio_projects').select('*').eq('id', projectId).single(),
-        supabase.from('video_studio_tracks').select('*').eq('project_id', projectId).order('position'),
         supabase.from('video_studio_keyframes').select('*').in('clip_id', timelineClips?.map(c => c.id) || []),
         supabase.from('video_studio_transitions').select('*').eq('project_id', projectId),
         supabase.from('video_studio_assets').select('*').in('id', [...new Set(timelineClips?.map(c => c.asset_id).filter(Boolean) || [])])
       ]);
       
       return {
-        project: project!,
+        project, // **FIX: Now guaranteed to be non-null**
         tracks: tracks || [],
         clips: timelineClips || [],
         keyframes: keyframes || [],

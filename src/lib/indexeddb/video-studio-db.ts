@@ -147,6 +147,7 @@ export class VideoStudioDB {
     // Periodic cleanup
     this.cleanupInterval = setInterval(() => {
       this._performCleanup().catch(console.warn);
+      this._cleanupBlobUrls(); // Also cleanup expired blob URLs
     }, CLEANUP_INTERVAL);
     
     // Performance monitoring
@@ -757,9 +758,193 @@ export class VideoStudioDB {
   }
   
   /**
+   * Store project cache data for offline persistence
+   */
+  async storeProjectCache(projectId: string, cacheData: any): Promise<void> {
+    await this.initialize();
+    
+    const transaction = this.db!.transaction(['project_cache'], 'readwrite');
+    const store = transaction.objectStore('project_cache');
+    
+    const cacheEntry = {
+      project_id: projectId,
+      data: cacheData,
+      cached_at: new Date().toISOString(),
+      size_bytes: JSON.stringify(cacheData).length
+    };
+    
+    try {
+      await this._promiseFromRequest(store.put(cacheEntry));
+      console.log(`📦 Project cache stored: ${projectId} (${cacheEntry.size_bytes} bytes)`);
+      
+      // Update cache statistics
+      await this._calculateCacheSize();
+      
+      // Check if we need to evict old cache entries
+      await this._performCacheEviction();
+    } catch (error) {
+      console.error('Failed to store project cache:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Retrieve project cache data
+   */
+  async getProjectCache(projectId: string): Promise<any> {
+    await this.initialize();
+    
+    const transaction = this.db!.transaction(['project_cache'], 'readonly');
+    const store = transaction.objectStore('project_cache');
+    const index = store.index('project_id');
+    
+    try {
+      const result = await this._promiseFromRequest(index.get(projectId));
+      return result?.data || null;
+    } catch (error) {
+      console.error('Failed to retrieve project cache:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Clear project cache
+   */
+  async clearProjectCache(projectId: string): Promise<void> {
+    await this.initialize();
+    
+    const transaction = this.db!.transaction(['project_cache'], 'readwrite');
+    const store = transaction.objectStore('project_cache');
+    const index = store.index('project_id');
+    
+    try {
+      const cursor = await this._promiseFromRequest(index.openCursor(projectId));
+      if (cursor) {
+        await this._promiseFromRequest(cursor.delete());
+      }
+      console.log(`🗑️ Project cache cleared: ${projectId}`);
+    } catch (error) {
+      console.error('Failed to clear project cache:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Production-grade blob URL generation with caching and cleanup
+   */
+  private blobUrlCache = new Map<string, { url: string; blob: Blob; created: number }>();
+  private readonly BLOB_URL_TTL = 60 * 60 * 1000; // 1 hour TTL for blob URLs
+  
+  /**
+   * Get or create a blob URL for a media file with intelligent caching
+   */
+  async getBlobUrl(fingerprint: string): Promise<string | null> {
+    try {
+      // Check cache first
+      const cached = this.blobUrlCache.get(fingerprint);
+      if (cached && Date.now() - cached.created < this.BLOB_URL_TTL) {
+        // Update access time for LRU
+        this.accessLog.set(`blob_${fingerprint}`, Date.now());
+        return cached.url;
+      }
+      
+      // Clean up expired cached URL
+      if (cached) {
+        URL.revokeObjectURL(cached.url);
+        this.blobUrlCache.delete(fingerprint);
+      }
+      
+      // Retrieve blob from IndexedDB
+      const blob = await this.getMediaFile(fingerprint);
+      if (!blob) {
+        console.warn(`⚠️ Media file not found in IndexedDB: ${fingerprint}`);
+        return null;
+      }
+      
+      // Create new blob URL
+      const blobUrl = URL.createObjectURL(blob);
+      
+      // Cache the blob URL with metadata
+      this.blobUrlCache.set(fingerprint, {
+        url: blobUrl,
+        blob,
+        created: Date.now()
+      });
+      
+      // Update access tracking
+      this.accessLog.set(`blob_${fingerprint}`, Date.now());
+      
+      console.log(`🔗 Generated blob URL for ${fingerprint}: ${blobUrl.substring(0, 50)}...`);
+      return blobUrl;
+      
+    } catch (error) {
+      console.error(`❌ Failed to generate blob URL for ${fingerprint}:`, error);
+      return null;
+    }
+  }
+  
+  /**
+   * Batch get blob URLs for multiple fingerprints (performance optimization)
+   */
+  async getBlobUrls(fingerprints: string[]): Promise<Map<string, string>> {
+    const results = new Map<string, string>();
+    
+    // Process in parallel for better performance
+    const promises = fingerprints.map(async (fingerprint) => {
+      const url = await this.getBlobUrl(fingerprint);
+      if (url) {
+        results.set(fingerprint, url);
+      }
+    });
+    
+    await Promise.all(promises);
+    return results;
+  }
+  
+  /**
+   * Clean up blob URLs to prevent memory leaks
+   */
+  private _cleanupBlobUrls(): void {
+    const now = Date.now();
+    for (const [fingerprint, cached] of this.blobUrlCache.entries()) {
+      if (now - cached.created > this.BLOB_URL_TTL) {
+        URL.revokeObjectURL(cached.url);
+        this.blobUrlCache.delete(fingerprint);
+        console.log(`🧹 Cleaned up expired blob URL: ${fingerprint}`);
+      }
+    }
+  }
+  
+  /**
+   * Revoke a specific blob URL
+   */
+  revokeBlobUrl(fingerprint: string): void {
+    const cached = this.blobUrlCache.get(fingerprint);
+    if (cached) {
+      URL.revokeObjectURL(cached.url);
+      this.blobUrlCache.delete(fingerprint);
+      this.accessLog.delete(`blob_${fingerprint}`);
+    }
+  }
+  
+  /**
+   * Revoke all cached blob URLs (cleanup on unmount)
+   */
+  revokeAllBlobUrls(): void {
+    for (const [fingerprint, cached] of this.blobUrlCache.entries()) {
+      URL.revokeObjectURL(cached.url);
+    }
+    this.blobUrlCache.clear();
+    console.log(`🧹 Revoked all blob URLs (${this.blobUrlCache.size} URLs)`);
+  }
+
+  /**
    * Cleanup and close database
    */
   async cleanup(): Promise<void> {
+    // Clean up blob URLs first
+    this.revokeAllBlobUrls();
+    
     if (this.cleanupInterval) {
       clearInterval(this.cleanupInterval);
       this.cleanupInterval = null;

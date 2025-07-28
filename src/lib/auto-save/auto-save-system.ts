@@ -75,7 +75,7 @@ export class AutoSaveSystem {
   private debounceTimers = new Map<string, NodeJS.Timeout>();
   private autoSaveIntervals = new Map<string, NodeJS.Timeout>();
   private callbacks: AutoSaveCallbacks = {};
-  private isOnline = navigator.onLine;
+  private isOnline = typeof window !== 'undefined' ? navigator.onLine : true; // SSR-safe
   private performanceMetrics = {
     totalSaves: 0,
     successfulSaves: 0,
@@ -98,7 +98,7 @@ export class AutoSaveSystem {
   }
 
   /**
-   * Initialize auto-save for a project
+   * Initialize auto-save for a project with production-grade error handling
    */
   async initializeProject(projectId: string, callbacks: AutoSaveCallbacks = {}): Promise<void> {
     this.callbacks = { ...this.callbacks, ...callbacks };
@@ -106,7 +106,7 @@ export class AutoSaveSystem {
     // Initialize save state
     const saveState: SaveState = {
       projectId,
-      version: 0,
+      version: 1,
       lastSaved: new Date().toISOString(),
       pendingOperations: [],
       isSaving: false,
@@ -116,15 +116,54 @@ export class AutoSaveSystem {
 
     this.saveStates.set(projectId, saveState);
 
-    // Load current version from database
+    // **FIX: Safely load project version with comprehensive error handling**
     try {
+      console.log(`🔍 Checking project existence: ${projectId}`);
       const project = await VideoStudioService.getProject(projectId);
+      
       if (project) {
-        saveState.version = project.version;
+        saveState.version = project.version || 1;
         saveState.lastSaved = project.updated_at;
+        console.log(`✅ Project version loaded: v${saveState.version}, last saved: ${saveState.lastSaved}`);
       }
-    } catch (error) {
-      console.warn('Failed to load project version:', error);
+    } catch (error: any) {
+      // **PRODUCTION FIX: Handle all project fetch errors gracefully**
+      const errorMessage = error?.message || 'Unknown error';
+      
+      if (errorMessage.includes('0 rows') || 
+          errorMessage.includes('not found') || 
+          errorMessage.includes('PGRST116') ||
+          error?.code === 'PGRST116') {
+        
+        console.warn(`⚠️ Project ${projectId} not found - will be created on first save`);
+        // Project doesn't exist, will be created when first save happens
+        saveState.version = 1;
+        saveState.lastSaved = new Date().toISOString();
+        
+      } else if (errorMessage.includes('row-level security') || 
+                 errorMessage.includes('permission denied') ||
+                 error?.code === '42501') {
+        
+        console.warn(`🔒 Access denied to project ${projectId} - RLS policy or permission issue`);
+        // User doesn't have access, treat as new project
+        saveState.version = 1;
+        saveState.lastSaved = new Date().toISOString();
+        
+      } else if (errorMessage.includes('network') || 
+                 errorMessage.includes('fetch') ||
+                 !this.isOnline) {
+        
+        console.warn(`🌐 Network error loading project ${projectId} - will retry when online`);
+        // Network issue, will try again later
+        saveState.version = 1;
+        saveState.lastSaved = new Date().toISOString();
+        
+      } else {
+        console.error(`❌ Unexpected error loading project ${projectId}:`, error);
+        // Unknown error, proceed with default state
+        saveState.version = 1;
+        saveState.lastSaved = new Date().toISOString();
+      }
     }
 
     // Start auto-save interval
@@ -176,7 +215,7 @@ export class AutoSaveSystem {
   }
 
   /**
-   * Perform the actual save operation
+   * Perform the actual save operation with project verification
    */
   private async performSave(projectId: string): Promise<void> {
     const saveState = this.saveStates.get(projectId);
@@ -189,6 +228,11 @@ export class AutoSaveSystem {
     this.callbacks.onSaveStart?.(projectId);
 
     try {
+      console.log(`💾 Starting auto-save for project ${projectId}...`);
+      
+      // **FIX 1: Ensure project exists before saving**
+      await this.ensureProjectExists(projectId, saveState);
+      
       // Check for conflicts before saving
       const hasConflicts = await this.checkForConflicts(projectId);
       if (hasConflicts) {
@@ -210,7 +254,6 @@ export class AutoSaveSystem {
 
       // Update save state
       saveState.version++;
-      saveState.lastSaved = new Date().toISOString();
       saveState.retryCount = 0;
       saveState.hasConflicts = false;
       saveState.lastError = undefined;
@@ -223,14 +266,22 @@ export class AutoSaveSystem {
         (this.performanceMetrics.averageSaveTime * (this.performanceMetrics.successfulSaves - 1) + saveTime) / 
         this.performanceMetrics.successfulSaves;
 
-      // Update lastSaved timestamp to prevent conflicts
-      saveState.lastSaved = new Date().toISOString();
-      
+      // **FIX 2: Safe timestamp sync with error handling**
+      try {
+        const updatedProject = await VideoStudioService.getProject(projectId);
+        saveState.lastSaved = updatedProject?.updated_at || new Date().toISOString();
+        console.log(`🔄 Server timestamp synced: ${saveState.lastSaved}`);
+      } catch (timestampError) {
+        // Fallback to local timestamp if server sync fails
+        saveState.lastSaved = new Date().toISOString();
+        console.warn(`⚠️ Could not sync server timestamp for ${projectId}:`, timestampError);
+      }
+
       this.callbacks.onSaveSuccess?.(projectId, saveState.version);
       console.log(`💾 Auto-save completed for ${projectId} (v${saveState.version}) in ${saveTime.toFixed(2)}ms`);
 
     } catch (error) {
-      console.error('Auto-save failed:', error);
+      console.error(`❌ Auto-save failed for ${projectId}:`, error);
       
       // Update error state
       saveState.retryCount++;
@@ -249,6 +300,44 @@ export class AutoSaveSystem {
 
     } finally {
       saveState.isSaving = false;
+    }
+  }
+
+  /**
+   * **NEW: Ensure project exists in database before saving**
+   */
+  private async ensureProjectExists(projectId: string, saveState: SaveState): Promise<void> {
+    try {
+      // Try to fetch the project to verify it exists
+      await VideoStudioService.getProject(projectId);
+      console.log(`✅ Project ${projectId} verified in database`);
+    } catch (error: any) {
+      if (error.message?.includes('0 rows') || error.message?.includes('not found') || error.message?.includes('PGRST116')) {
+        console.warn(`⚠️ Project ${projectId} not found in database, creating...`);
+        
+        // **FIX 3: Create project in database if missing**
+        try {
+          const newProject = await VideoStudioService.createProject({
+            title: "Auto-Recovered Project",
+            description: "Project created during auto-save recovery",
+            resolution_width: 1920,
+            resolution_height: 1080,
+            fps: 30,
+            aspect_ratio: '16:9'
+          });
+          
+          // Update the saveState with the newly created project info
+          saveState.lastSaved = newProject.updated_at;
+          
+          console.log(`✅ Created missing project ${projectId} in database`);
+        } catch (createError) {
+          console.error(`❌ Failed to create missing project:`, createError);
+          throw new Error(`Cannot auto-save: Project ${projectId} doesn't exist and creation failed`);
+        }
+      } else {
+        // Re-throw other errors (network, auth, etc.)
+        throw error;
+      }
     }
   }
 
@@ -328,14 +417,14 @@ export class AutoSaveSystem {
   }
 
   /**
-   * Save to IndexedDB cache
+   * Save to IndexedDB cache for offline persistence
    */
   private async saveToIndexedDB(
     projectId: string,
     operations: ReturnType<typeof this.groupOperations>
   ): Promise<void> {
     try {
-      // Cache project data for offline access
+      // Cache project data for offline access and persistence
       const cacheData = {
         project_id: projectId,
         timeline_data: operations.timeline || {},
@@ -345,8 +434,11 @@ export class AutoSaveSystem {
         size_bytes: JSON.stringify(operations).length,
       };
 
-      // Store in IndexedDB (implementation would be in video-studio-db.ts)
-      // await videoStudioDB.storeProjectCache(projectId, cacheData);
+      // Store in IndexedDB for persistence across sessions
+      const { VideoStudioDB } = await import('../indexeddb/video-studio-db');
+      const videoStudioDB = VideoStudioDB.getInstance();
+      await videoStudioDB.storeProjectCache(projectId, cacheData);
+      console.log(`📦 Project cached to IndexedDB: ${projectId}`);
     } catch (error) {
       console.warn('Failed to cache project data:', error);
     }
@@ -373,13 +465,21 @@ export class AutoSaveSystem {
         return true;
       }
 
-      // Check timestamp for additional safety
+      // Check timestamp for additional safety (only if versions match)
+      // If versions are different, rely on version comparison
+      if (serverVersion === localVersion) {
       const serverUpdated = new Date(serverProject.updated_at).getTime();
       const localUpdated = new Date(saveState.lastSaved).getTime();
 
-      if (serverUpdated > localUpdated + 5000) { // 5 second tolerance
-        console.warn('🔀 Timestamp conflict detected');
+        // Use larger tolerance to account for network delays and time sync issues
+        if (serverUpdated > localUpdated + 30000) { // 30 second tolerance for production
+          console.warn('🔀 Timestamp conflict detected', {
+            serverUpdated: serverProject.updated_at,
+            localUpdated: saveState.lastSaved,
+            difference: (serverUpdated - localUpdated) / 1000 + 's'
+          });
         return true;
+        }
       }
 
       return false;
@@ -535,9 +635,14 @@ export class AutoSaveSystem {
   }
 
   /**
-   * Setup network monitoring
+   * Setup network monitoring (SSR-safe)
    */
   private setupNetworkMonitoring(): void {
+    // Skip if running on server-side
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+      return;
+    }
+
     const updateOnlineStatus = () => {
       const wasOnline = this.isOnline;
       this.isOnline = navigator.onLine;

@@ -23,8 +23,11 @@ interface UseVideoFilmstripsOptions {
  */
 export function useVideoFilmstrips() {
   const [filmstrips, setFilmstrips] = useState<Map<string, VideoFilmstripState>>(new Map());
-  const loadingQueue = useRef<Array<{ clipId: string; url: string; clipDuration: number; clipWidth: number; options: UseVideoFilmstripsOptions }>>([]);
+  const loadingQueue = useRef<Array<{ clipId: string; url: string; clipDuration: number; clipWidth: number; options: UseVideoFilmstripsOptions; retryCount?: number }>>([]);
   const isProcessing = useRef(false);
+  const failedClips = useRef<Set<string>>(new Set()); // Track permanently failed clips
+  const MAX_RETRIES = 2; // Maximum retry attempts
+  const PROCESSING_DELAY = 200; // Delay between processing items
   
   // Get filmstrip state for a specific clip
   const getFilmstripState = useCallback((clipId: string): VideoFilmstripState => {
@@ -35,7 +38,7 @@ export function useVideoFilmstrips() {
     };
   }, [filmstrips]);
   
-  // Process the loading queue
+  // Process the loading queue with production-grade error handling
   const processQueue = useCallback(async () => {
     if (isProcessing.current || loadingQueue.current.length === 0) {
       return;
@@ -56,7 +59,35 @@ export function useVideoFilmstrips() {
       return;
     }
     
-    const { clipId, url, clipDuration, clipWidth, options } = item;
+    const { clipId, url, clipDuration, clipWidth, options, retryCount = 0 } = item;
+    
+    // Skip permanently failed clips
+    if (failedClips.current.has(clipId)) {
+      console.log(`⏭️ Skipping permanently failed clip: ${clipId}`);
+      isProcessing.current = false;
+      // Continue processing queue after delay
+      if (loadingQueue.current.length > 0) {
+        setTimeout(() => processQueue(), PROCESSING_DELAY);
+      }
+      return;
+    }
+
+    // Validate URL before processing
+    if (!url || url === 'undefined' || url.startsWith('blob:') && !url.includes('-')) {
+      console.warn(`❌ Invalid URL for clip ${clipId}: ${url}`);
+      failedClips.current.add(clipId);
+      setFilmstrips(prev => new Map(prev).set(clipId, {
+        filmstrip: null,
+        isLoading: false,
+        error: 'Invalid file URL - file may not be available'
+      }));
+      isProcessing.current = false;
+      // Continue processing queue
+      if (loadingQueue.current.length > 0) {
+        setTimeout(() => processQueue(), PROCESSING_DELAY);
+      }
+      return;
+    }
     
     try {
       // Update state to loading
@@ -66,37 +97,67 @@ export function useVideoFilmstrips() {
         error: null
       }));
       
-      // Generate filmstrip
-      const filmstrip = await createCachedVideoFilmstrip(
+      console.log(`🎬 Generating filmstrip for clip ${clipId} (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+      
+      // Generate filmstrip with timeout
+      const filmstripPromise = createCachedVideoFilmstrip(
         url,
         clipDuration,
         clipWidth,
         options.config
       );
       
-      // Update state with filmstrip
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Filmstrip generation timeout')), 30000); // 30 second timeout
+      });
+      
+      const filmstrip = await Promise.race([filmstripPromise, timeoutPromise]) as string | null;
+      
+      // Success - update state with filmstrip
       setFilmstrips(prev => new Map(prev).set(clipId, {
         filmstrip,
         isLoading: false,
         error: null
       }));
       
-    } catch (error) {
-      console.warn(`Failed to generate filmstrip for clip ${clipId}:`, error);
+      console.log(`✅ Filmstrip generated successfully for clip ${clipId}`);
       
-      // Update state with error
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.warn(`❌ Failed to generate filmstrip for clip ${clipId} (attempt ${retryCount + 1}):`, errorMessage);
+      
+      // Check if we should retry
+      if (retryCount < MAX_RETRIES && !errorMessage.includes('net::ERR_FILE_NOT_FOUND')) {
+        // Add back to queue for retry with increased retry count
+        loadingQueue.current.unshift({
+          clipId,
+          url,
+          clipDuration,
+          clipWidth,
+          options,
+          retryCount: retryCount + 1
+        });
+        console.log(`🔄 Retrying filmstrip generation for clip ${clipId} (${retryCount + 1}/${MAX_RETRIES})`);
+      } else {
+        // Permanently failed - add to failed set and update state
+        failedClips.current.add(clipId);
       setFilmstrips(prev => new Map(prev).set(clipId, {
         filmstrip: null,
         isLoading: false,
-        error: error instanceof Error ? error.message : 'Unknown error'
+          error: `Failed to generate filmstrip: ${errorMessage}`
       }));
+        console.error(`🛑 Permanently failed to generate filmstrip for clip ${clipId} after ${retryCount + 1} attempts`);
+      }
     }
     
     isProcessing.current = false;
     
-    // Continue processing queue
-    setTimeout(() => processQueue(), 100); // Small delay to prevent blocking
-  }, []);
+    // Continue processing queue after delay (only if there are items to process)
+    if (loadingQueue.current.length > 0) {
+      setTimeout(() => processQueue(), PROCESSING_DELAY);
+    }
+  }, [MAX_RETRIES, PROCESSING_DELAY]);
   
   // Request filmstrip for a clip
   const requestFilmstrip = useCallback((
@@ -106,10 +167,28 @@ export function useVideoFilmstrips() {
     clipWidth: number,
     options: UseVideoFilmstripsOptions = {}
   ) => {
+    // Skip permanently failed clips
+    if (failedClips.current.has(clipId)) {
+      console.log(`⏭️ Skipping filmstrip request for permanently failed clip: ${clipId}`);
+      return;
+    }
+
     const currentState = filmstrips.get(clipId);
     
     // Skip if already loading or loaded
     if (currentState?.isLoading || currentState?.filmstrip) {
+      return;
+    }
+
+    // Validate URL before adding to queue
+    if (!url || url === 'undefined' || (url.startsWith('blob:') && !url.includes('-'))) {
+      console.warn(`❌ Invalid URL for filmstrip request ${clipId}: ${url}`);
+      failedClips.current.add(clipId);
+      setFilmstrips(prev => new Map(prev).set(clipId, {
+        filmstrip: null,
+        isLoading: false,
+        error: 'Invalid file URL - file may not be available'
+      }));
       return;
     }
     

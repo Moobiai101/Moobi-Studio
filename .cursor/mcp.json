@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "command": "C:\\studio\\ai-creative-suite\\supabase-mcp.bat"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 "use client";
 
+import React, { useState, useEffect } from "react";
 import { 
   AbsoluteFill, 
   Audio, 
@@ -9,7 +10,8 @@ import {
   useVideoConfig,
   Sequence 
 } from "remotion";
-import { VideoProject, TimelineClip, MediaAsset, getMediaInfo } from "../store/video-project-store";
+import { useVideoProject } from "../hooks/use-video-project";
+import { VideoProject, TimelineClip, MediaAsset, getMediaInfo, getMediaInfoWithBlobUrl } from "../store/video-project-store";
 
 interface VideoCompositionProps {
   project: VideoProject;
@@ -178,15 +180,36 @@ const AudioTrackSequence: React.FC<TrackSequenceProps> = ({
 };
 */
 
-// Individual clip renderers
+// Production-grade video clip renderer with IndexedDB blob URL support
 const VideoClipRenderer: React.FC<{
   mediaInfo: ReturnType<typeof getMediaInfo>;
   clip: TimelineClip;
 }> = ({ mediaInfo, clip }) => {
+  const [resolvedUrl, setResolvedUrl] = useState<string>(mediaInfo.url);
+
+  // **PRODUCTION FIX: Resolve blob URL for video playback**
+  useEffect(() => {
+    const resolveVideoUrl = async () => {
+      if (!mediaInfo.url.startsWith('blob:') && !mediaInfo.url.startsWith('http')) {
+        try {
+          const resolvedInfo = await getMediaInfoWithBlobUrl({ ...mediaInfo, fingerprint: mediaInfo.url });
+          if (resolvedInfo.url !== mediaInfo.url) {
+            setResolvedUrl(resolvedInfo.url);
+            console.log(`🎬 Resolved video URL for clip: ${resolvedInfo.url.substring(0, 50)}...`);
+          }
+        } catch (error) {
+          console.error('Failed to resolve video URL for clip:', error);
+        }
+      }
+    };
+
+    resolveVideoUrl();
+  }, [mediaInfo.url, mediaInfo]);
+
   return (
     <Video
-      src={mediaInfo.url}
-      startFrom={Math.floor(clip.trimStart * 30)} // TODO: Use proper FPS from project
+      src={resolvedUrl}
+      startFrom={Math.floor(clip.trimStart * 30)}
       endAt={Math.floor(clip.trimEnd * 30)}
       volume={0} // Muted - Audio Engine handles all audio
       style={{
@@ -206,9 +229,30 @@ const ImageClipRenderer: React.FC<{
   mediaInfo: ReturnType<typeof getMediaInfo>;
   clip: TimelineClip;
 }> = ({ mediaInfo, clip }) => {
+  const [resolvedUrl, setResolvedUrl] = useState<string>(mediaInfo.url);
+
+  // **PRODUCTION FIX: Resolve blob URL for image display**
+  useEffect(() => {
+    const resolveImageUrl = async () => {
+      if (!mediaInfo.url.startsWith('blob:') && !mediaInfo.url.startsWith('http')) {
+        try {
+          const resolvedInfo = await getMediaInfoWithBlobUrl({ ...mediaInfo, fingerprint: mediaInfo.url });
+          if (resolvedInfo.url !== mediaInfo.url) {
+            setResolvedUrl(resolvedInfo.url);
+            console.log(`🖼️ Resolved image URL for clip: ${resolvedInfo.url.substring(0, 50)}...`);
+          }
+        } catch (error) {
+          console.error('Failed to resolve image URL for clip:', error);
+        }
+      }
+    };
+
+    resolveImageUrl();
+  }, [mediaInfo.url, mediaInfo]);
+
   return (
     <Img
-      src={mediaInfo.url}
+      src={resolvedUrl}
       style={{
         width: "100%",
         height: "100%",

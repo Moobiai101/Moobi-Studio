@@ -1,3 +1,5 @@
+import { videoStudioDB } from "@/lib/indexeddb/video-studio-db";
+
 // Media utility functions for video studio
 
 /**
@@ -532,6 +534,7 @@ export const filmstripCache = new FilmstripCache();
 
 /**
  * Cached version of filmstrip creation for optimal performance
+ * **ENHANCED**: Now supports IndexedDB blob URL resolution
  */
 export const createCachedVideoFilmstrip = async (
   url: string,
@@ -541,17 +544,211 @@ export const createCachedVideoFilmstrip = async (
 ): Promise<string> => {
   const finalConfig = { ...DEFAULT_FILMSTRIP_CONFIG, ...config };
   
-  // Check cache first
+  // **PRODUCTION FIX: Resolve blob URL if needed**
+  let resolvedUrl = url;
+  if (!url.startsWith('blob:') && !url.startsWith('http')) {
+    try {
+      const blobUrl = await mediaUrlResolver.resolveMediaUrl(url);
+      if (blobUrl) {
+        resolvedUrl = blobUrl;
+        console.log(`🎬 Filmstrip using resolved URL: ${blobUrl.substring(0, 50)}...`);
+      } else {
+        console.warn(`⚠️ Could not resolve URL for filmstrip: ${url}`);
+        throw new Error(`Media file not accessible: ${url}`);
+      }
+    } catch (error) {
+      console.error(`❌ Failed to resolve URL for filmstrip generation:`, error);
+      throw error;
+    }
+  }
+  
+  // Check cache first (using original URL as cache key for consistency)
   const cached = filmstripCache.get(url, finalConfig);
   if (cached) {
     return cached;
   }
   
-  // Generate new filmstrip
-  const filmstrip = await createVideoFilmstrip(url, clipDuration, clipWidth, config);
+  // Generate new filmstrip with resolved URL
+  const filmstrip = await createVideoFilmstrip(resolvedUrl, clipDuration, clipWidth, config);
   
-  // Cache result
+  // Cache result using original URL as key
   filmstripCache.set(url, finalConfig, filmstrip);
   
   return filmstrip;
+}; 
+
+// **PRODUCTION-GRADE MEDIA URL RESOLUTION SERVICE**
+// Extends existing media utilities with IndexedDB blob URL support
+
+/**
+ * Enhanced media URL resolver with caching and error handling
+ * This extends the existing media utilities with production-grade blob URL support
+ */
+export class MediaUrlResolver {
+  private static instance: MediaUrlResolver | null = null;
+  private urlCache = new Map<string, { url: string; expiry: number }>();
+  private readonly CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+  private resolutionPromises = new Map<string, Promise<string | null>>();
+  
+  static getInstance(): MediaUrlResolver {
+    if (!MediaUrlResolver.instance) {
+      MediaUrlResolver.instance = new MediaUrlResolver();
+    }
+    return MediaUrlResolver.instance;
+  }
+  
+  /**
+   * Resolve a media URL with intelligent caching and fallback
+   * This extends the existing media handling to support IndexedDB blob URLs
+   */
+  async resolveMediaUrl(fingerprint: string): Promise<string | null> {
+    // Return early if already a valid URL
+    if (fingerprint.startsWith('blob:') || fingerprint.startsWith('http')) {
+      return fingerprint;
+    }
+    
+    // Check cache first
+    const cached = this.urlCache.get(fingerprint);
+    if (cached && Date.now() < cached.expiry) {
+      return cached.url;
+    }
+    
+    // Check if resolution is already in progress
+    if (this.resolutionPromises.has(fingerprint)) {
+      return this.resolutionPromises.get(fingerprint)!;
+    }
+    
+    // Start new resolution
+    const promise = this._resolveUrl(fingerprint);
+    this.resolutionPromises.set(fingerprint, promise);
+    
+    try {
+      const url = await promise;
+      this.resolutionPromises.delete(fingerprint);
+      
+      if (url) {
+        this.urlCache.set(fingerprint, {
+          url,
+          expiry: Date.now() + this.CACHE_TTL
+        });
+      }
+      
+      return url;
+    } catch (error) {
+      this.resolutionPromises.delete(fingerprint);
+      console.error(`Failed to resolve media URL for ${fingerprint}:`, error);
+      return null;
+    }
+  }
+  
+  private async _resolveUrl(fingerprint: string): Promise<string | null> {
+    try {
+      const blobUrl = await videoStudioDB.getBlobUrl(fingerprint);
+      if (blobUrl) {
+        console.log(`🔗 MediaUrlResolver: Generated blob URL for ${fingerprint}`);
+        return blobUrl;
+      }
+      return null;
+    } catch (error) {
+      console.error(`MediaUrlResolver: Failed to resolve ${fingerprint}:`, error);
+      return null;
+    }
+  }
+  
+  /**
+   * Batch resolve multiple URLs for performance
+   */
+  async resolveMediaUrls(fingerprints: string[]): Promise<Map<string, string>> {
+    const results = new Map<string, string>();
+    
+    // Filter out already valid URLs and cached entries
+    const toResolve: string[] = [];
+    for (const fp of fingerprints) {
+      if (fp.startsWith('blob:') || fp.startsWith('http')) {
+        results.set(fp, fp);
+        continue;
+      }
+      
+      const cached = this.urlCache.get(fp);
+      if (cached && Date.now() < cached.expiry) {
+        results.set(fp, cached.url);
+        continue;
+      }
+      
+      toResolve.push(fp);
+    }
+    
+    // Batch resolve remaining URLs
+    if (toResolve.length > 0) {
+      try {
+        const blobUrls = await videoStudioDB.getBlobUrls(toResolve);
+        for (const [fingerprint, url] of blobUrls.entries()) {
+          results.set(fingerprint, url);
+          this.urlCache.set(fingerprint, {
+            url,
+            expiry: Date.now() + this.CACHE_TTL
+          });
+        }
+      } catch (error) {
+        console.error('Batch URL resolution failed:', error);
+      }
+    }
+    
+    return results;
+  }
+  
+  /**
+   * Clear expired cache entries
+   */
+  cleanup(): void {
+    const now = Date.now();
+    for (const [fingerprint, cached] of this.urlCache.entries()) {
+      if (now >= cached.expiry) {
+        this.urlCache.delete(fingerprint);
+      }
+    }
+  }
+  
+  /**
+   * Clear all cached URLs
+   */
+  clearCache(): void {
+    this.urlCache.clear();
+    this.resolutionPromises.clear();
+  }
+}
+
+// Export singleton instance for global use
+export const mediaUrlResolver = MediaUrlResolver.getInstance();
+
+/**
+ * Convenience function for single URL resolution
+ * Extends existing media utilities with blob URL support
+ */
+export const resolveMediaUrl = (fingerprint: string): Promise<string | null> => {
+  return mediaUrlResolver.resolveMediaUrl(fingerprint);
+};
+
+/**
+ * Enhanced video metadata extraction with blob URL support
+ * This extends the existing getVideoMetadata function to work with IndexedDB
+ */
+export const getVideoMetadataFromFingerprint = async (fingerprint: string): Promise<{
+  duration: number;
+  width: number;
+  height: number;
+  fps?: number;
+} | null> => {
+  try {
+    const url = await resolveMediaUrl(fingerprint);
+    if (!url) {
+      console.warn(`Could not resolve URL for fingerprint: ${fingerprint}`);
+      return null;
+    }
+    
+    return await getVideoMetadata(url);
+  } catch (error) {
+    console.error(`Failed to get video metadata for ${fingerprint}:`, error);
+    return null;
+  }
 }; 
