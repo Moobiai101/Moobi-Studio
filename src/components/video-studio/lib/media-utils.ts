@@ -495,37 +495,90 @@ export const createVideoFilmstrip = async (
 };
 
 /**
- * Cache for storing generated filmstrips
+ * Cache for storing generated filmstrips with IndexedDB persistence
  * Implements professional video editor caching strategies
  */
 class FilmstripCache {
-  private cache = new Map<string, string>();
+  private memoryCache = new Map<string, string>();
   private readonly maxSize = 100; // Maximum cached filmstrips
   
-  private getCacheKey(url: string, config: FilmstripConfig): string {
+  private getCacheKey(fingerprint: string, config: FilmstripConfig, clipDuration: number): string {
     // Include all relevant config properties that affect the output
-    return `${url}_${config.frameCount}_${config.frameWidth}_${config.frameHeight}_${config.quality}_${config.layout}_${config.sourceStartTime || 0}_${config.sourceDuration || 'full'}`;
+    // Use fingerprint for stable caching across sessions
+    return `${fingerprint}_${config.frameCount}_${config.frameWidth}_${config.frameHeight}_${config.quality}_${config.layout}_${config.sourceStartTime || 0}_${config.sourceDuration || clipDuration}`;
   }
   
-  get(url: string, config: FilmstripConfig): string | null {
-    const key = this.getCacheKey(url, config);
-    return this.cache.get(key) || null;
-  }
-  
-  set(url: string, config: FilmstripConfig, filmstrip: string): void {
-    const key = this.getCacheKey(url, config);
+  async get(fingerprint: string, config: FilmstripConfig, clipDuration: number): Promise<string | null> {
+    const key = this.getCacheKey(fingerprint, config, clipDuration);
     
-    // Remove oldest entries if cache is full
-    if (this.cache.size >= this.maxSize) {
-      const firstKey = this.cache.keys().next().value!;
-      this.cache.delete(firstKey);
+    // Check memory cache first
+    const memoryResult = this.memoryCache.get(key);
+    if (memoryResult) {
+      console.log(`🎬 Filmstrip found in memory cache: ${key}`);
+      return memoryResult;
     }
     
-    this.cache.set(key, filmstrip);
+    // Check IndexedDB cache
+    try {
+      const filmstripBlob = await videoStudioDB.getFilmstrip(key);
+      if (filmstripBlob) {
+        // Convert blob back to data URL
+        const dataUrl = await this.blobToDataUrl(filmstripBlob);
+        
+        // Store in memory cache for faster access
+        this.memoryCache.set(key, dataUrl);
+        console.log(`🎬 Filmstrip found in IndexedDB cache: ${key}`);
+        return dataUrl;
+      }
+    } catch (error) {
+      console.warn(`Failed to retrieve filmstrip from IndexedDB: ${error}`);
+    }
+    
+    return null;
+  }
+  
+  async set(fingerprint: string, config: FilmstripConfig, filmstrip: string, clipDuration: number): Promise<void> {
+    const key = this.getCacheKey(fingerprint, config, clipDuration);
+    
+    // Store in memory cache
+    if (this.memoryCache.size >= this.maxSize) {
+      const firstKey = this.memoryCache.keys().next().value!;
+      this.memoryCache.delete(firstKey);
+    }
+    this.memoryCache.set(key, filmstrip);
+    
+    // Store in IndexedDB for persistence
+    try {
+      const blob = await this.dataUrlToBlob(filmstrip);
+      await videoStudioDB.storeFilmstrip(
+        key,
+        fingerprint,
+        blob,
+        config.frameCount,
+        config.frameWidth
+      );
+      console.log(`💾 Filmstrip stored in IndexedDB: ${key}`);
+    } catch (error) {
+      console.warn(`Failed to store filmstrip in IndexedDB: ${error}`);
+    }
   }
   
   clear(): void {
-    this.cache.clear();
+    this.memoryCache.clear();
+  }
+  
+  private async dataUrlToBlob(dataUrl: string): Promise<Blob> {
+    const response = await fetch(dataUrl);
+    return response.blob();
+  }
+  
+  private async blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
   }
 }
 
@@ -544,35 +597,38 @@ export const createCachedVideoFilmstrip = async (
 ): Promise<string> => {
   const finalConfig = { ...DEFAULT_FILMSTRIP_CONFIG, ...config };
   
-  // **PRODUCTION FIX: Resolve blob URL if needed**
+  // The URL is now expected to be a fingerprint, so we always resolve it.
   let resolvedUrl = url;
-  if (!url.startsWith('blob:') && !url.startsWith('http')) {
-    try {
-      const blobUrl = await mediaUrlResolver.resolveMediaUrl(url);
-      if (blobUrl) {
-        resolvedUrl = blobUrl;
-        console.log(`🎬 Filmstrip using resolved URL: ${blobUrl.substring(0, 50)}...`);
-      } else {
-        console.warn(`⚠️ Could not resolve URL for filmstrip: ${url}`);
-        throw new Error(`Media file not accessible: ${url}`);
-      }
-    } catch (error) {
-      console.error(`❌ Failed to resolve URL for filmstrip generation:`, error);
-      throw error;
+  
+  try {
+    const blobUrl = await mediaUrlResolver.resolveMediaUrl(url);
+    if (blobUrl) {
+      resolvedUrl = blobUrl;
+      console.log(`🎬 Filmstrip using resolved URL: ${blobUrl.substring(0, 50)}...`);
+    } else {
+      console.warn(`⚠️ Could not resolve fingerprint for filmstrip: ${url}`);
+      throw new Error(`Media file not accessible for fingerprint: ${url}`);
     }
+  } catch (error) {
+    console.error(`❌ Failed to resolve fingerprint for filmstrip generation:`, error);
+    throw error;
   }
   
-  // Check cache first (using original URL as cache key for consistency)
-  const cached = filmstripCache.get(url, finalConfig);
+  // Check cache first (using original fingerprint as cache key for consistency)
+  const cached = await filmstripCache.get(url, finalConfig, clipDuration);
   if (cached) {
+    console.log(`✅ Filmstrip retrieved from cache for fingerprint: ${url}`);
     return cached;
   }
+  
+  // No need to log the key here, it's an internal detail of the cache
+  console.log(`🎬 Generating new filmstrip, not found in cache for fingerprint: ${url}`);
   
   // Generate new filmstrip with resolved URL
   const filmstrip = await createVideoFilmstrip(resolvedUrl, clipDuration, clipWidth, config);
   
-  // Cache result using original URL as key
-  filmstripCache.set(url, finalConfig, filmstrip);
+  // Cache result using original fingerprint as key
+  await filmstripCache.set(url, finalConfig, filmstrip, clipDuration);
   
   return filmstrip;
 }; 

@@ -102,7 +102,8 @@ function VideoClip({
 
   // Request filmstrip for video clips using professional editor standards
   useEffect(() => {
-    if (clip.asset.type === 'video' && clip.asset.url && clipWidth > 20) {
+    // Use fingerprint for stable caching
+    if (clip.asset.type === 'video' && clip.asset.fingerprint && clipWidth > 20) {
       const clipDuration = clip.endTime - clip.startTime;
       
       // Professional approach: Fixed height, high quality, optimized frame count
@@ -113,7 +114,7 @@ function VideoClip({
       // Request filmstrip with professional settings
       filmstripsManager.requestFilmstrip(
         clip.id,
-        clip.asset.url,
+        clip.asset.fingerprint, // Pass fingerprint instead of blob URL
         clip.endTime - clip.startTime, // This is the display duration on the timeline
         clipWidth,
         {
@@ -130,7 +131,7 @@ function VideoClip({
         }
       );
     }
-  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.endTime, clip.startTime, clip.trimStart, clip.trimEnd, filmstripsManager, optimalFrameCount]);
+  }, [clip.id, clip.asset.fingerprint, clip.asset.type, clipWidth, isSelected, clip.endTime, clip.startTime, clip.trimStart, clip.trimEnd, filmstripsManager, optimalFrameCount]);
   
   // Get filmstrip state
   const filmstrip = filmstripsManager.getFilmstrip(clip.id);
@@ -291,7 +292,8 @@ function OverlayClip({
 
   // Request filmstrip for video overlays using professional editor standards
   useEffect(() => {
-    if (clip.asset.type === 'video' && clip.asset.url && clipWidth > 20) {
+    // Use fingerprint for stable caching
+    if (clip.asset.type === 'video' && clip.asset.fingerprint && clipWidth > 20) {
       const clipDuration = clip.endTime - clip.startTime;
       
       // Professional approach: Fixed height, high quality, optimized frame count
@@ -302,7 +304,7 @@ function OverlayClip({
       // Request filmstrip with professional settings
       filmstripsManager.requestFilmstrip(
         clip.id,
-        clip.asset.url,
+        clip.asset.fingerprint, // Pass fingerprint instead of blob URL
         clip.endTime - clip.startTime, // This is the display duration on the timeline
         clipWidth,
         {
@@ -319,7 +321,7 @@ function OverlayClip({
         }
       );
     }
-  }, [clip.id, clip.asset.url, clip.asset.type, clipWidth, isSelected, clip.endTime, clip.startTime, clip.trimStart, clip.trimEnd, filmstripsManager, optimalFrameCount]);
+  }, [clip.id, clip.asset.fingerprint, clip.asset.type, clipWidth, isSelected, clip.endTime, clip.startTime, clip.trimStart, clip.trimEnd, filmstripsManager, optimalFrameCount]);
   
   // Get filmstrip state
   const filmstrip = filmstripsManager.getFilmstrip(clip.id);
@@ -614,7 +616,8 @@ export function VideoTimeline() {
             ...clip,
             asset: {
               ...asset,
-              ...mediaInfo // Add extracted media info for compatibility
+              ...mediaInfo, // Add extracted media info for compatibility
+              fingerprint: mediaInfo.fingerprint // Ensure fingerprint is preserved
             },
             trackType: track.type
           });
@@ -642,7 +645,8 @@ export function VideoTimeline() {
             ...clip,
             asset: {
               ...asset,
-              ...mediaInfo // Add extracted media info for compatibility
+              ...mediaInfo, // Add extracted media info for compatibility
+              fingerprint: mediaInfo.fingerprint // Ensure fingerprint is preserved
             },
             trackType: track.type,
             trackId: track.id,

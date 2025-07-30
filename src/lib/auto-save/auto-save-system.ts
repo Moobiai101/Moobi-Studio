@@ -540,19 +540,20 @@ export class AutoSaveSystem {
     const saveState = this.saveStates.get(projectId);
     if (!saveState) return;
 
+    // TODO: Implement a robust 3-way merge strategy for collaborative editing.
+    // The current implementation defaults to "last write wins" (overwrite)
+    // which is handled by the conflict resolution switch. This function
+    // is a placeholder for a future, more advanced implementation.
+    console.warn(`🔀 Merging conflicts for project ${projectId}. Currently using overwrite strategy.`);
+    
     try {
-      // Update local version to match server
+      // Update local version to match server as part of the overwrite process
       saveState.version = serverProject.version;
       saveState.lastSaved = serverProject.updated_at;
 
-      // Merge timeline data if needed
-      const serverTimeline = await VideoStudioService.getTimelineData(projectId);
-      // Implement intelligent merging logic here
-      // This would involve comparing timestamps, user preferences, etc.
-
-      console.log('🔀 Conflicts merged successfully');
+      console.log('✅ Conflicts resolved by overwriting with local changes.');
     } catch (error) {
-      console.error('Merge failed:', error);
+      console.error('Merge-overwrite failed:', error);
       throw error;
     }
   }

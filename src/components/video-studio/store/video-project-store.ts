@@ -41,17 +41,19 @@ export const getMediaInfo = (asset: UserAsset | any) => {
     type = asset.type;
   }
   
-  // **PRODUCTION FIX: Use fingerprint to identify cached blob URLs**
-  const fingerprint = asset.r2_object_key || asset.url;
-  let url = fingerprint;
+  // **PRODUCTION FIX: Use stable fingerprint for caching, separate from blob URL**
+  const fingerprint = asset.fingerprint || asset.r2_object_key;
+  let url = asset.url || fingerprint; // Use pre-resolved URL if available
   
-  // Check if we have a cached blob URL that's still valid
-  const cached = mediaUrlCache.get(fingerprint);
-  if (cached && Date.now() < cached.expiry) {
-    url = cached.url;
-  } else if (cached) {
-    // Clean up expired cache entry
-    mediaUrlCache.delete(fingerprint);
+  // Only check cache if we don't already have a blob URL
+  if (!url.startsWith('blob:')) {
+    const cached = mediaUrlCache.get(fingerprint);
+    if (cached && Date.now() < cached.expiry) {
+      url = cached.url;
+    } else if (cached) {
+      // Clean up expired cache entry
+      mediaUrlCache.delete(fingerprint);
+    }
   }
   
   return {
@@ -339,26 +341,6 @@ export type VideoProjectStore = ReturnType<typeof createVideoProjectStore>;
 export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
   createStore<VideoProjectState>((set, get) => {
     
-    // Helper function to queue auto-save after state changes
-    const queueAutoSave = (updatedProject: VideoProject) => {
-      const autoSave = AutoSaveSystem.getInstance();
-      
-      // **FIX: Only queue auto-save for projects that exist in database**
-      // Check if this is a temporary local project vs database project
-      if (updatedProject.id && updatedProject.id.match(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)) {
-        autoSave.queueSave(updatedProject.id, { 
-          type: 'project', 
-          data: { 
-            updated_at: updatedProject.updatedAt.toISOString(),
-            file_count: updatedProject.mediaAssets.length,
-            total_file_size: updatedProject.mediaAssets.reduce((sum, a) => sum + a.file_size_bytes, 0)
-          } 
-        });
-      } else {
-        console.warn(`⚠️ Skipping auto-save for local project: ${updatedProject.id}`);
-      }
-    };
-    
     return {
       // Initial project state - use provided projectId or create temporary one
       project: createDefaultProject(projectId),
@@ -395,21 +377,35 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           await get().ensureProjectInDatabase();
         }
         
-        // First, save asset to database to get proper ID
-        const dbAsset = await VideoStudioService.createAsset({
-          fingerprint: asset.r2_object_key, // Use r2_object_key as fingerprint
-          original_filename: asset.file_name,
-          content_type: asset.content_type,
-          file_size_bytes: asset.file_size_bytes,
-          duration_seconds: asset.duration_seconds,
-          width: asset.dimensions?.width,
-          height: asset.dimensions?.height,
-          video_codec: asset.video_metadata?.codec,
-          audio_codec: asset.video_metadata?.codec, // Use same codec for audio
-        });
+        // **FIX: Check if asset already exists for current user before creating**
+        let dbAsset = await VideoStudioService.getAssetByFingerprintForCurrentUser(asset.r2_object_key);
+        
+        if (!dbAsset) {
+          // Asset doesn't exist for current user, create it
+          dbAsset = await VideoStudioService.createAsset({
+            fingerprint: asset.r2_object_key, // Use r2_object_key as fingerprint
+            original_filename: asset.file_name,
+            content_type: asset.content_type,
+            file_size_bytes: asset.file_size_bytes,
+            duration_seconds: asset.duration_seconds,
+            width: asset.dimensions?.width,
+            height: asset.dimensions?.height,
+            video_codec: asset.video_metadata?.codec,
+            audio_codec: asset.video_metadata?.codec, // Use same codec for audio
+          });
+          console.log("✅ New asset created in database:", dbAsset.id, asset.file_name);
+        } else {
+          console.log("♻️ Reusing existing asset from database:", dbAsset.id, asset.file_name);
+        }
 
         // Then update local state with database asset
         set((state) => {
+          // **FIX: Check if asset already exists in the project before adding**
+          if (state.project.mediaAssets.some(a => a.id === dbAsset.id)) {
+            console.warn(`Asset ${dbAsset.id} already in project, skipping.`);
+            return state; // Return current state without modification
+          }
+
           const newProject = {
           ...state.project,
           mediaAssets: [
@@ -424,13 +420,13 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           updatedAt: new Date(),
           };
           
-          // Queue auto-save for project metadata
-          queueAutoSave(newProject);
+          // **FIX: Call the full saveProject to persist all timeline changes**
+          get().saveProject();
           
           return { project: newProject };
         });
 
-        console.log("✅ Asset saved to database:", dbAsset.id, asset.file_name);
+        console.log("✅ Asset added to project:", dbAsset.id, asset.file_name);
       } catch (error) {
         console.error("❌ Failed to save asset to database:", error);
         
@@ -536,47 +532,8 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
             updatedAt: new Date(),
         };
 
-        // Queue auto-save with clip data (only if asset exists)
-        if (newClip.mediaId) {
-          const autoSave = AutoSaveSystem.getInstance();
-          autoSave.queueSave(newProject.id, { 
-            type: 'clip', 
-            data: {
-              id: newClip.id,
-              project_id: newProject.id,
-              track_id: newClip.trackId,
-              asset_id: newClip.mediaId,
-              start_time: newClip.startTime,
-              end_time: newClip.endTime,
-              layer_index: 0,
-              trim_start: newClip.trimStart,
-              trim_end: newClip.trimEnd,
-              position_x: 0,
-              position_y: 0,
-              scale_x: 1,
-              scale_y: 1,
-              rotation: 0,
-              anchor_x: 0.5,
-              anchor_y: 0.5,
-              opacity: 1,
-              blend_mode: 'normal',
-              volume: newClip.volume,
-              muted: newClip.muted,
-              playback_rate: 1,
-              video_effects: [],
-              audio_effects: [],
-              motion_blur_enabled: false,
-              motion_blur_shutter_angle: 180,
-              quality_level: 'high',
-              tags: [],
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            } 
-          });
-          console.log(`🎬 Queued clip save: ${newClip.id} → asset: ${newClip.mediaId}`);
-        } else {
-          console.warn(`⚠️ Skipping clip save - no asset ID: ${newClip.id}`);
-        }
+        // **FIX: Call the full saveProject to persist all timeline changes**
+        get().saveProject();
 
         return {
           project: newProject,
@@ -594,16 +551,8 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           updatedAt: new Date(),
         };
 
-        // Queue auto-save for project state (clip deletion)
-        const autoSave = AutoSaveSystem.getInstance();
-        autoSave.queueSave(newProject.id, { 
-          type: 'project', 
-          data: {
-            updated_at: newProject.updatedAt.toISOString(),
-            duration_seconds: Math.max(...newProject.tracks.flatMap(t => t.clips.map(c => c.endTime)), 0)
-          }
-        });
-        console.log(`🗑️ Queued clip deletion save: ${id}`);
+        // **FIX: Call the full saveProject to persist all timeline changes**
+        get().saveProject();
 
         return { project: newProject };
       }),
@@ -621,49 +570,8 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           updatedAt: new Date(),
         };
 
-        // Find the updated clip and queue auto-save
-        const updatedClip = newProject.tracks
-          .flatMap(track => track.clips)
-          .find(clip => clip.id === id);
-
-        if (updatedClip && updatedClip.mediaId) {
-          const autoSave = AutoSaveSystem.getInstance();
-          autoSave.queueSave(newProject.id, { 
-            type: 'clip', 
-            data: {
-              id: updatedClip.id,
-              project_id: newProject.id,
-              track_id: updatedClip.trackId,
-              asset_id: updatedClip.mediaId,
-              start_time: updatedClip.startTime,
-              end_time: updatedClip.endTime,
-              layer_index: 0,
-              trim_start: updatedClip.trimStart,
-              trim_end: updatedClip.trimEnd,
-              position_x: 0,
-              position_y: 0,
-              scale_x: 1,
-              scale_y: 1,
-              rotation: 0,
-              anchor_x: 0.5,
-              anchor_y: 0.5,
-              opacity: 1,
-              blend_mode: 'normal',
-              volume: updatedClip.volume,
-              muted: updatedClip.muted,
-              playback_rate: 1,
-              video_effects: updatedClip.effects || [],
-              audio_effects: [],
-              motion_blur_enabled: false,
-              motion_blur_shutter_angle: 180,
-              quality_level: 'high',
-              tags: [],
-              created_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            } 
-          });
-          console.log(`🔄 Queued clip update save: ${updatedClip.id} - ${Object.keys(updates).join(', ')}`);
-        }
+        // **FIX: Call the full saveProject to persist all timeline changes**
+        get().saveProject();
 
         return { project: newProject };
       }),
@@ -736,12 +644,17 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           return track;
         });
         
+        const newProject = {
+          ...project,
+          tracks: updatedTracks,
+          updatedAt: new Date(),
+        };
+
+        // **FIX: Call the full saveProject to persist all timeline changes**
+        get().saveProject();
+        
         return {
-          project: {
-            ...project,
-            tracks: updatedTracks,
-            updatedAt: new Date(),
-          },
+          project: newProject,
           selectedClipId: firstClip.id, // Select the first clip after split
         };
       }),
@@ -1007,7 +920,7 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
         
         // Now we can start auto-saving
         const updatedState = get();
-        queueAutoSave(updatedState.project);
+        get().saveProject();
         
       } catch (error) {
         console.error("❌ Failed to create project in database:", error);

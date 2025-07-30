@@ -183,7 +183,9 @@ export function VideoProjectProvider({
                   file_name: asset.original_filename,
                   source_studio: 'video-studio',
                   tags: [],
-                  r2_object_key: recoveredBlobUrl, // Use recovered blob URL or fingerprint
+                  r2_object_key: asset.fingerprint, // Keep original fingerprint as r2_object_key
+                  url: recoveredBlobUrl, // Store resolved blob URL separately
+                  fingerprint: asset.fingerprint, // Explicitly preserve fingerprint
                   content_type: asset.content_type,
                   file_size_bytes: asset.file_size_bytes,
                   duration_seconds: asset.duration_seconds,
@@ -224,7 +226,10 @@ export function VideoProjectProvider({
           },
           onConflictDetected: (projectId, conflict) => {
             console.warn(`⚠️ Conflict detected for project ${projectId}:`, conflict);
-            return 'merge'; // Auto-merge conflicts
+            // **FIX: Use 'overwrite' as the default conflict resolution strategy**
+            // This ensures the user's latest changes are always saved ("last write wins").
+            // The 'merge' strategy is not fully implemented and was causing data loss.
+            return 'overwrite';
           },
           onNetworkStatusChange: (isOnline) => {
             console.log(`🌐 Network status changed: ${isOnline ? 'online' : 'offline'}`);

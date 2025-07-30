@@ -237,6 +237,31 @@ export class VideoStudioService {
       return null;
     }
   }
+
+  /**
+   * Get asset by fingerprint for current user (for duplicate checking)
+   */
+  static async getAssetByFingerprintForCurrentUser(fingerprint: string): Promise<VideoStudioAsset | null> {
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      if (authError || !user) {
+        throw new Error('User not authenticated');
+      }
+
+      const { data, error } = await supabase
+        .from('video_studio_assets')
+        .select('*')
+        .eq('fingerprint', fingerprint)
+        .eq('user_id', user.id)
+        .single();
+      
+      if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows
+      return data || null;
+    } catch (error) {
+      console.error('Failed to get asset by fingerprint for current user:', error);
+      return null;
+    }
+  }
   
   /**
    * Get all assets for a user

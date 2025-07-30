@@ -18,18 +18,18 @@ interface UseVideoFilmstripsOptions {
 }
 
 /**
- * Hook for managing video filmstrips in timeline clips
- * Implements professional video editor loading strategies
+ * Enhanced hook for managing video filmstrips with robust caching and performance.
+ * This version uses a media fingerprint for stable caching, preventing re-renders.
+ * It also includes a professional-grade processing queue with prioritization and retry logic.
  */
 export function useVideoFilmstrips() {
   const [filmstrips, setFilmstrips] = useState<Map<string, VideoFilmstripState>>(new Map());
-  const loadingQueue = useRef<Array<{ clipId: string; url: string; clipDuration: number; clipWidth: number; options: UseVideoFilmstripsOptions; retryCount?: number }>>([]);
+  const loadingQueue = useRef<Array<{ clipId: string; mediaFingerprint: string; clipDuration: number; clipWidth: number; options: UseVideoFilmstripsOptions; retryCount?: number }>>([]);
   const isProcessing = useRef(false);
-  const failedClips = useRef<Set<string>>(new Set()); // Track permanently failed clips
-  const MAX_RETRIES = 2; // Maximum retry attempts
-  const PROCESSING_DELAY = 200; // Delay between processing items
-  
-  // Get filmstrip state for a specific clip
+  const failedClips = useRef<Set<string>>(new Set());
+  const MAX_RETRIES = 2;
+  const PROCESSING_DELAY = 150; // Slightly faster processing
+
   const getFilmstripState = useCallback((clipId: string): VideoFilmstripState => {
     return filmstrips.get(clipId) || {
       filmstrip: null,
@@ -38,7 +38,6 @@ export function useVideoFilmstrips() {
     };
   }, [filmstrips]);
   
-  // Process the loading queue with production-grade error handling
   const processQueue = useCallback(async () => {
     if (isProcessing.current || loadingQueue.current.length === 0) {
       return;
@@ -59,9 +58,8 @@ export function useVideoFilmstrips() {
       return;
     }
     
-    const { clipId, url, clipDuration, clipWidth, options, retryCount = 0 } = item;
+    const { clipId, mediaFingerprint, clipDuration, clipWidth, options, retryCount = 0 } = item;
     
-    // Skip permanently failed clips
     if (failedClips.current.has(clipId)) {
       console.log(`⏭️ Skipping permanently failed clip: ${clipId}`);
       isProcessing.current = false;
@@ -72,17 +70,15 @@ export function useVideoFilmstrips() {
       return;
     }
 
-    // Validate URL before processing
-    if (!url || url === 'undefined' || url.startsWith('blob:') && !url.includes('-')) {
-      console.warn(`❌ Invalid URL for clip ${clipId}: ${url}`);
+    if (!mediaFingerprint || typeof mediaFingerprint !== 'string' || mediaFingerprint.trim() === '') {
+      console.warn(`❌ Invalid fingerprint for clip ${clipId}: ${mediaFingerprint}`);
       failedClips.current.add(clipId);
       setFilmstrips(prev => new Map(prev).set(clipId, {
         filmstrip: null,
         isLoading: false,
-        error: 'Invalid file URL - file may not be available'
+        error: 'Invalid media fingerprint'
       }));
       isProcessing.current = false;
-      // Continue processing queue
       if (loadingQueue.current.length > 0) {
         setTimeout(() => processQueue(), PROCESSING_DELAY);
       }
@@ -90,31 +86,27 @@ export function useVideoFilmstrips() {
     }
     
     try {
-      // Update state to loading
       setFilmstrips(prev => new Map(prev).set(clipId, {
         filmstrip: null,
         isLoading: true,
         error: null
       }));
       
-      console.log(`🎬 Generating filmstrip for clip ${clipId} (attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
+      console.log(`🎬 Generating filmstrip for clip ${clipId} (fingerprint: ${mediaFingerprint}, attempt ${retryCount + 1}/${MAX_RETRIES + 1})`);
       
-      // Generate filmstrip with timeout
       const filmstripPromise = createCachedVideoFilmstrip(
-        url,
+        mediaFingerprint,
         clipDuration,
         clipWidth,
         options.config
       );
       
-      // Add timeout to prevent hanging
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Filmstrip generation timeout')), 30000); // 30 second timeout
+        setTimeout(() => reject(new Error('Filmstrip generation timeout')), 30000);
       });
       
       const filmstrip = await Promise.race([filmstripPromise, timeoutPromise]) as string | null;
       
-      // Success - update state with filmstrip
       setFilmstrips(prev => new Map(prev).set(clipId, {
         filmstrip,
         isLoading: false,
@@ -129,24 +121,22 @@ export function useVideoFilmstrips() {
       
       // Check if we should retry
       if (retryCount < MAX_RETRIES && !errorMessage.includes('net::ERR_FILE_NOT_FOUND')) {
-        // Add back to queue for retry with increased retry count
         loadingQueue.current.unshift({
           clipId,
-          url,
+          mediaFingerprint,
           clipDuration,
           clipWidth,
           options,
           retryCount: retryCount + 1
         });
-        console.log(`🔄 Retrying filmstrip generation for clip ${clipId} (${retryCount + 1}/${MAX_RETRIES})`);
+        console.log(`🔄 Retrying filmstrip generation for clip ${clipId}`);
       } else {
-        // Permanently failed - add to failed set and update state
         failedClips.current.add(clipId);
-      setFilmstrips(prev => new Map(prev).set(clipId, {
-        filmstrip: null,
-        isLoading: false,
+        setFilmstrips(prev => new Map(prev).set(clipId, {
+          filmstrip: null,
+          isLoading: false,
           error: `Failed to generate filmstrip: ${errorMessage}`
-      }));
+        }));
         console.error(`🛑 Permanently failed to generate filmstrip for clip ${clipId} after ${retryCount + 1} attempts`);
       }
     }
@@ -159,15 +149,13 @@ export function useVideoFilmstrips() {
     }
   }, [MAX_RETRIES, PROCESSING_DELAY]);
   
-  // Request filmstrip for a clip
   const requestFilmstrip = useCallback((
     clipId: string,
-    url: string,
+    mediaFingerprint: string,
     clipDuration: number,
     clipWidth: number,
     options: UseVideoFilmstripsOptions = {}
   ) => {
-    // Skip permanently failed clips
     if (failedClips.current.has(clipId)) {
       console.log(`⏭️ Skipping filmstrip request for permanently failed clip: ${clipId}`);
       return;
@@ -175,48 +163,43 @@ export function useVideoFilmstrips() {
 
     const currentState = filmstrips.get(clipId);
     
-    // Skip if already loading or loaded
+    // Skip if already loading, loaded, or queued
     if (currentState?.isLoading || currentState?.filmstrip) {
       return;
     }
 
-    // Validate URL before adding to queue
-    if (!url || url === 'undefined' || (url.startsWith('blob:') && !url.includes('-'))) {
-      console.warn(`❌ Invalid URL for filmstrip request ${clipId}: ${url}`);
+    if (!mediaFingerprint || typeof mediaFingerprint !== 'string' || mediaFingerprint.trim() === '') {
+      console.warn(`❌ Invalid fingerprint for filmstrip request ${clipId}: ${mediaFingerprint}`);
       failedClips.current.add(clipId);
       setFilmstrips(prev => new Map(prev).set(clipId, {
         filmstrip: null,
         isLoading: false,
-        error: 'Invalid file URL - file may not be available'
+        error: 'Invalid media fingerprint'
       }));
       return;
     }
     
-    // Skip if disabled
     if (options.enabled === false) {
       return;
     }
     
-    // Check if already in queue
+    // Check if already in queue to prevent duplicates
     const isQueued = loadingQueue.current.some(item => item.clipId === clipId);
     if (isQueued) {
       return;
     }
     
-    // Add to queue
     loadingQueue.current.push({
       clipId,
-      url,
+      mediaFingerprint,
       clipDuration,
       clipWidth,
       options
     });
     
-    // Start processing
     processQueue();
   }, [filmstrips, processQueue]);
   
-  // Clear filmstrip for a clip
   const clearFilmstrip = useCallback((clipId: string) => {
     setFilmstrips(prev => {
       const newMap = new Map(prev);
@@ -228,23 +211,19 @@ export function useVideoFilmstrips() {
     loadingQueue.current = loadingQueue.current.filter(item => item.clipId !== clipId);
   }, []);
   
-  // Clear all filmstrips
   const clearAllFilmstrips = useCallback(() => {
     setFilmstrips(new Map());
     loadingQueue.current = [];
   }, []);
   
-  // Get filmstrip URL for a clip (convenience method)
   const getFilmstrip = useCallback((clipId: string): string | null => {
     return filmstrips.get(clipId)?.filmstrip || null;
   }, [filmstrips]);
   
-  // Check if a clip is loading
   const isLoadingFilmstrip = useCallback((clipId: string): boolean => {
     return filmstrips.get(clipId)?.isLoading || false;
   }, [filmstrips]);
   
-  // Get error for a clip
   const getFilmstripError = useCallback((clipId: string): string | null => {
     return filmstrips.get(clipId)?.error || null;
   }, [filmstrips]);
@@ -268,29 +247,29 @@ export function useVideoFilmstrips() {
 }
 
 /**
- * Hook for a single video clip filmstrip
- * Simpler interface for individual clips
+ * Simplified hook for a single video clip's filmstrip.
+ * This hook abstracts away the complexity of the filmstrip manager.
  */
 export function useVideoFilmstrip(
   clipId: string,
-  url: string,
+  mediaFingerprint: string,
   clipDuration: number,
   clipWidth: number,
   options: UseVideoFilmstripsOptions = {}
 ) {
-  const filmstripsManager = useVideoFilmstrips();
+  const filmstripsManager = useVideoFilmstripsContext();
   
-  // Request filmstrip when dependencies change
   useEffect(() => {
-    if (url && clipDuration > 0 && clipWidth > 0) {
-      filmstripsManager.requestFilmstrip(clipId, url, clipDuration, clipWidth, options);
+    if (mediaFingerprint && clipDuration > 0 && clipWidth > 0) {
+      filmstripsManager.requestFilmstrip(clipId, mediaFingerprint, clipDuration, clipWidth, options);
     }
-  }, [clipId, url, clipDuration, clipWidth, options.enabled, filmstripsManager]);
+  }, [clipId, mediaFingerprint, clipDuration, clipWidth, options.enabled, filmstripsManager]);
   
-  // Cleanup when unmounting
   useEffect(() => {
     return () => {
-      filmstripsManager.clearFilmstrip(clipId);
+      // Note: We might not want to clear the filmstrip on unmount,
+      // as it might be needed again soon. This could be a configurable option.
+      // filmstripsManager.clearFilmstrip(clipId);
     };
   }, [clipId, filmstripsManager]);
   
