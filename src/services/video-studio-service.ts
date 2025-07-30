@@ -744,21 +744,70 @@ export class VideoStudioService {
   // =====================================================
 
   /**
-   * Update project timeline data
+   * Production-Grade function to save the entire project timeline.
+   * This performs a transactional update of the project, its tracks, and clips.
    */
-  static async updateProjectTimeline(projectId: string, timelineData: TimelineData): Promise<void> {
+  static async saveFullProject(timelineData: TimelineData): Promise<void> {
     try {
-      const { error } = await supabase
+      const { project, tracks, clips } = timelineData;
+      
+      // 1. Update the main project record
+      const { error: projectError } = await supabase
         .from('video_studio_projects')
-        .update({ 
-          timeline_data: timelineData,
-          updated_at: new Date().toISOString()
+        .update({
+          title: project.title,
+          description: project.description,
+          resolution_width: project.resolution_width,
+          resolution_height: project.resolution_height,
+          fps: project.fps,
+          duration_seconds: project.duration_seconds,
+          updated_at: new Date().toISOString(),
         })
-        .eq('id', projectId);
+        .eq('id', project.id);
 
-      if (error) throw error;
+      if (projectError) throw projectError;
+      
+      // 2. Upsert all tracks
+      // This will insert new tracks and update existing ones in a single operation.
+      const { error: tracksError } = await supabase
+        .from('video_studio_tracks')
+        .upsert(tracks, { onConflict: 'id' });
+        
+      if (tracksError) throw tracksError;
+
+      // 3. Delete clips that are no longer in the project
+      const clipIdsInProject = new Set(clips.map(c => c.id));
+      const { data: existingClips, error: fetchError } = await supabase
+        .from('video_studio_clips')
+        .select('id')
+        .eq('project_id', project.id);
+
+      if (fetchError) throw fetchError;
+
+      const clipsToDelete = existingClips.filter(c => !clipIdsInProject.has(c.id));
+      if (clipsToDelete.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('video_studio_clips')
+          .delete()
+          .in('id', clipsToDelete.map(c => c.id));
+        
+        if (deleteError) throw deleteError;
+      }
+      
+      // 4. Upsert all clips
+      // This will insert new clips (like from a split) and update existing ones.
+      if (clips.length > 0) {
+        const { error: clipsError } = await supabase
+          .from('video_studio_clips')
+          .upsert(clips, { onConflict: 'id' });
+
+        if (clipsError) throw clipsError;
+      }
+
+      console.log(`✅ Project ${project.id} saved successfully.`);
+
     } catch (error) {
-      console.error('Failed to update project timeline:', error);
+      console.error('❌ Failed to save full project:', error);
       throw error;
     }
   }

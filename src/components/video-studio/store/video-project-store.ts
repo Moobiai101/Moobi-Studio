@@ -174,6 +174,8 @@ export interface TimelineClip {
   volume: number;
   muted: boolean;
   effects: Effect[];
+  createdAt?: string; // ISO timestamp for database persistence
+  updatedAt?: string; // ISO timestamp for database persistence
 }
 
 export interface Effect {
@@ -246,7 +248,7 @@ export interface VideoProjectState {
   setPlaybackRate: (rate: number) => void;
   
   // Media management
-  addMediaAsset: (asset: Omit<MediaAsset, "id" | "createdAt">) => void;
+  addMediaAsset: (asset: Omit<MediaAsset, "id" | "createdAt">) => Promise<void>;
   removeMediaAsset: (id: string) => void;
   setSelectedMediaId: (id: string | null) => void;
   
@@ -257,11 +259,11 @@ export interface VideoProjectState {
   setSelectedTrackId: (id: string | null) => void;
   
   // Clip management
-  addClip: (clip: Omit<TimelineClip, "id">) => void;
-  removeClip: (id: string) => void;
-  updateClip: (id: string, updates: Partial<TimelineClip>) => void;
+  addClip: (clip: Omit<TimelineClip, "id">) => Promise<void>;
+  removeClip: (id: string) => Promise<void>;
+  updateClip: (id: string, updates: Partial<TimelineClip>) => Promise<void>;
   setSelectedClipId: (id: string | null) => void;
-  splitClip: (clipId: string, splitTime: number) => void;
+  splitClip: (clipId: string, splitTime: number) => Promise<void>;
   
   // Timeline controls
   setTimelineZoom: (zoom: number) => void;
@@ -284,6 +286,7 @@ export interface VideoProjectState {
   // **NEW: Database management**
   ensureProjectInDatabase: () => Promise<void>;
 }
+
 
 const createDefaultProject = (projectId: string): VideoProject => ({
   id: projectId,
@@ -514,12 +517,14 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
     setSelectedTrackId: (id) => set({ selectedTrackId: id }),
 
     // Clip management
-    addClip: (clip) =>
+    addClip: async (clip) => {
       set((state) => {
         const newClip: TimelineClip = {
           ...clip,
           id: generateUUID(), // Fixed: Use proper UUID instead of nanoid
           muted: clip.muted ?? false, // Default to not muted
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
         };
 
         const newProject = {
@@ -532,15 +537,16 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
             updatedAt: new Date(),
         };
 
-        // **FIX: Call the full saveProject to persist all timeline changes**
-        get().saveProject();
-
         return {
           project: newProject,
         };
-      }),
+      });
 
-    removeClip: (id) =>
+      // **FIX: Await the full saveProject to ensure persistence**
+      await get().saveProject();
+    },
+
+    removeClip: async (id) => {
       set((state) => {
         const newProject = {
           ...state.project,
@@ -551,13 +557,14 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           updatedAt: new Date(),
         };
 
-        // **FIX: Call the full saveProject to persist all timeline changes**
-        get().saveProject();
-
         return { project: newProject };
-      }),
+      });
 
-    updateClip: (id, updates) =>
+      // **FIX: Await the full saveProject to ensure persistence**
+      await get().saveProject();
+    },
+
+    updateClip: async (id, updates) => {
       set((state) => {
         const newProject = {
           ...state.project,
@@ -570,94 +577,100 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
           updatedAt: new Date(),
         };
 
-        // **FIX: Call the full saveProject to persist all timeline changes**
-        get().saveProject();
-
         return { project: newProject };
-      }),
+      });
+
+      // **FIX: Await the full saveProject to ensure persistence**
+      await get().saveProject();
+    },
 
     setSelectedClipId: (id) => set({ selectedClipId: id }),
 
     // Split clip functionality
-    splitClip: (clipId, splitTime) =>
-      set((state) => {
-        const project = state.project;
-        
-        // Find the clip to split
-        let clipToSplit: TimelineClip | null = null;
-        let trackId: string | null = null;
-        
-        for (const track of project.tracks) {
-          const clip = track.clips.find(c => c.id === clipId);
-          if (clip) {
-            clipToSplit = clip;
-            trackId = track.id;
-            break;
-          }
+    splitClip: async (clipId, splitTime) => {
+      const state = get();
+      const project = state.project;
+      
+      // Find the clip to split
+      let clipToSplit: TimelineClip | null = null;
+      let trackId: string | null = null;
+      
+      for (const track of project.tracks) {
+        const clip = track.clips.find(c => c.id === clipId);
+        if (clip) {
+          clipToSplit = clip;
+          trackId = track.id;
+          break;
         }
-        
-        if (!clipToSplit || !trackId) {
-          console.warn('Clip not found for splitting:', clipId);
-          return state;
+      }
+      
+      if (!clipToSplit || !trackId) {
+        console.warn('Clip not found for splitting:', clipId);
+        return;
+      }
+      
+      // Validate split time is within clip bounds
+      if (splitTime <= clipToSplit.startTime || splitTime >= clipToSplit.endTime) {
+        console.warn('Split time is outside clip bounds');
+        return;
+      }
+      
+      // Calculate split positions
+      const originalDuration = clipToSplit.endTime - clipToSplit.startTime;
+      const timeFromStart = splitTime - clipToSplit.startTime;
+      const trimDuration = clipToSplit.trimEnd - clipToSplit.trimStart;
+      
+      // Calculate trim positions for split
+      const trimSplitPoint = clipToSplit.trimStart + (timeFromStart / originalDuration) * trimDuration;
+      
+      // Create first clip (from start to split)
+      const firstClip: TimelineClip = {
+        ...clipToSplit,
+        id: generateUUID(), // Fixed: Use proper UUID instead of nanoid
+        endTime: splitTime,
+        trimEnd: trimSplitPoint,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      
+      // Create second clip (from split to end)
+      const secondClip: TimelineClip = {
+        ...clipToSplit,
+        id: generateUUID(), // Fixed: Use proper UUID instead of nanoid
+        startTime: splitTime,
+        trimStart: trimSplitPoint,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      
+      // Update the project with new clips
+      const updatedTracks = project.tracks.map(track => {
+        if (track.id === trackId) {
+          // Remove original clip and add the two new clips
+          const clipsWithoutOriginal = track.clips.filter(c => c.id !== clipId);
+          return {
+            ...track,
+            clips: [...clipsWithoutOriginal, firstClip, secondClip]
+          };
         }
-        
-        // Validate split time is within clip bounds
-        if (splitTime <= clipToSplit.startTime || splitTime >= clipToSplit.endTime) {
-          console.warn('Split time is outside clip bounds');
-          return state;
-        }
-        
-        // Calculate split positions
-        const originalDuration = clipToSplit.endTime - clipToSplit.startTime;
-        const timeFromStart = splitTime - clipToSplit.startTime;
-        const trimDuration = clipToSplit.trimEnd - clipToSplit.trimStart;
-        
-        // Calculate trim positions for split
-        const trimSplitPoint = clipToSplit.trimStart + (timeFromStart / originalDuration) * trimDuration;
-        
-        // Create first clip (from start to split)
-        const firstClip: TimelineClip = {
-          ...clipToSplit,
-          id: generateUUID(), // Fixed: Use proper UUID instead of nanoid
-          endTime: splitTime,
-          trimEnd: trimSplitPoint,
-        };
-        
-        // Create second clip (from split to end)
-        const secondClip: TimelineClip = {
-          ...clipToSplit,
-          id: generateUUID(), // Fixed: Use proper UUID instead of nanoid
-          startTime: splitTime,
-          trimStart: trimSplitPoint,
-        };
-        
-        // Update the project with new clips
-        const updatedTracks = project.tracks.map(track => {
-          if (track.id === trackId) {
-            // Remove original clip and add the two new clips
-            const clipsWithoutOriginal = track.clips.filter(c => c.id !== clipId);
-            return {
-              ...track,
-              clips: [...clipsWithoutOriginal, firstClip, secondClip]
-            };
-          }
-          return track;
-        });
-        
-        const newProject = {
-          ...project,
-          tracks: updatedTracks,
-          updatedAt: new Date(),
-        };
+        return track;
+      });
+      
+      const newProject = {
+        ...project,
+        tracks: updatedTracks,
+        updatedAt: new Date(),
+      };
 
-        // **FIX: Call the full saveProject to persist all timeline changes**
-        get().saveProject();
-        
-        return {
-          project: newProject,
-          selectedClipId: firstClip.id, // Select the first clip after split
-        };
-      }),
+      // Update state first
+      set({
+        project: newProject,
+        selectedClipId: firstClip.id, // Select the first clip after split
+      });
+
+      // **FIX: Await the full saveProject to ensure persistence**
+      await get().saveProject();
+    },
 
     // Timeline controls
     setTimelineZoom: (zoom) => set({ timelineZoom: zoom }),
@@ -737,7 +750,8 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
               motion_blur_shutter_angle: 180.0,
               quality_level: 'high',
               tags: [],
-              created_at: new Date().toISOString(),
+              // **PRODUCTION FIX: Preserve original timestamps for existing clips**
+              created_at: clip.createdAt || new Date().toISOString(),
               updated_at: new Date().toISOString(),
             }))
           ),
@@ -772,11 +786,7 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
         };
 
         // Save to database via VideoStudioService
-        await VideoStudioService.updateProjectTimeline(state.project.id, timelineData);
-        
-        // Queue auto-save for background persistence
-        const autoSave = AutoSaveSystem.getInstance();
-        autoSave.queueSave(state.project.id, { type: 'timeline', data: timelineData });
+        await VideoStudioService.saveFullProject(timelineData);
         
         console.log("✅ Project saved successfully:", state.project.id);
       } catch (error) {

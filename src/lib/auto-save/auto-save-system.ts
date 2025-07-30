@@ -391,29 +391,24 @@ export class AutoSaveSystem {
     projectId: string,
     operations: ReturnType<typeof this.groupOperations>
   ): Promise<void> {
-    const promises: Promise<any>[] = [];
-
-    // Update project
-    if (operations.project) {
-      promises.push(VideoStudioService.updateProject(projectId, operations.project));
+    // **PRODUCTION FIX: Simplified auto-save for backup purposes only**
+    // Since we now have immediate saves, auto-save serves as a backup mechanism
+    
+    try {
+      // Only update project metadata for auto-save (lightweight operation)
+      if (operations.project) {
+        await VideoStudioService.updateProject(projectId, operations.project);
+      }
+      
+      // **REMOVED: timeline, clips, keyframes updates**
+      // These are now handled by immediate saveProject() calls for better performance
+      // and to avoid conflicts with real-time saves
+      
+      console.log(`🔄 Auto-save backup completed for project ${projectId}`);
+    } catch (error) {
+      console.error(`❌ Auto-save backup failed for project ${projectId}:`, error);
+      throw error;
     }
-
-    // Update timeline
-    if (operations.timeline) {
-      promises.push(VideoStudioService.updateProjectTimeline(projectId, operations.timeline));
-    }
-
-    // Batch update clips
-    if (operations.clips.length > 0) {
-      promises.push(VideoStudioService.batchUpdateClips(operations.clips));
-    }
-
-    // Batch update keyframes
-    if (operations.keyframes.length > 0) {
-      promises.push(VideoStudioService.batchUpdateKeyframes(operations.keyframes));
-    }
-
-    await Promise.all(promises);
   }
 
   /**
