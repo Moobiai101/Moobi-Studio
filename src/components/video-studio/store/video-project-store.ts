@@ -221,6 +221,11 @@ export interface VideoProjectState {
   // **NEW: Track database state**
   isProjectInDatabase: boolean;
   
+  // **NEW: Save status tracking for production-grade UX**
+  saveStatus: 'idle' | 'saving' | 'saved' | 'error';
+  lastSavedAt: string | null;
+  saveError: string | null;
+  
   // Playback state
   currentTime: number;
   isPlaying: boolean;
@@ -350,6 +355,11 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
       
       // **NEW: Track if project exists in database**
       isProjectInDatabase: false,
+
+      // **NEW: Save status tracking for production-grade UX**
+      saveStatus: 'idle' as const,
+      lastSavedAt: null,
+      saveError: null,
 
     // Initial state
     currentTime: 0,
@@ -687,9 +697,11 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
 
     // Project management
     saveProject: async () => {
-      const state = get();
       try {
-        // Convert store format to database format and save
+        // **PRODUCTION FIX: Set saving status immediately**
+        set({ saveStatus: 'saving', saveError: null });
+        
+        const state = get();
         const timelineData: TimelineData = {
           project: {
             id: state.project.id,
@@ -750,7 +762,6 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
               motion_blur_shutter_angle: 180.0,
               quality_level: 'high',
               tags: [],
-              // **PRODUCTION FIX: Preserve original timestamps for existing clips**
               created_at: clip.createdAt || new Date().toISOString(),
               updated_at: new Date().toISOString(),
             }))
@@ -788,8 +799,23 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
         // Save to database via VideoStudioService
         await VideoStudioService.saveFullProject(timelineData);
         
-        console.log("✅ Project saved successfully:", state.project.id);
+        // **PRODUCTION FIX: Set saved status with timestamp**
+        const savedAt = new Date().toISOString();
+        set({ 
+          saveStatus: 'saved', 
+          lastSavedAt: savedAt,
+          saveError: null 
+        });
+        
+        console.log("✅ Project saved successfully:", state.project.id, "at", savedAt);
       } catch (error) {
+        // **PRODUCTION FIX: Set error status**
+        const errorMessage = error instanceof Error ? error.message : 'Unknown save error';
+        set({ 
+          saveStatus: 'error',
+          saveError: errorMessage 
+        });
+        
         console.error("❌ Failed to save project:", error);
         throw error;
       }
@@ -927,15 +953,10 @@ export const createVideoProjectStore = ({ projectId }: { projectId: string }) =>
         });
         
         console.log(`✅ Project created in database with ID: ${dbProject.id}`);
-        
-        // Now we can start auto-saving
-        const updatedState = get();
-        get().saveProject();
-        
       } catch (error) {
         console.error("❌ Failed to create project in database:", error);
         throw error;
       }
     },
   };
-}); 
+});

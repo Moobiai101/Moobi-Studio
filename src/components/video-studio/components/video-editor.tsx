@@ -46,11 +46,14 @@ export function VideoEditor() {
     project,
     currentTime,
     isPlaying,
-    setIsPlaying,
     setCurrentTime,
+    setIsPlaying,
     selectedClipId,
     addMediaAsset,
     saveProject,
+    saveStatus,
+    lastSavedAt,
+    saveError,
   } = useVideoProject();
 
   const [showExportDialog, setShowExportDialog] = useState(false);
@@ -201,10 +204,33 @@ export function VideoEditor() {
             size="sm"
             onClick={saveProject}
             className="text-zinc-400 hover:text-white h-8 px-3"
+            disabled={saveStatus === 'saving'}
           >
             <Save className="w-4 h-4 mr-1" />
-            Save
+            {saveStatus === 'saving' ? 'Saving...' : 'Save'}
           </Button>
+          
+          {/* **PRODUCTION SAVE STATUS INDICATOR** */}
+          <div className="flex items-center ml-2">
+            {saveStatus === 'saving' && (
+              <div className="flex items-center text-yellow-400 text-xs">
+                <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse mr-1" />
+                Saving...
+              </div>
+            )}
+            {saveStatus === 'saved' && lastSavedAt && (
+              <div className="flex items-center text-green-400 text-xs">
+                <div className="w-2 h-2 bg-green-400 rounded-full mr-1" />
+                Saved {new Date(lastSavedAt).toLocaleTimeString()}
+              </div>
+            )}
+            {saveStatus === 'error' && saveError && (
+              <div className="flex items-center text-red-400 text-xs">
+                <div className="w-2 h-2 bg-red-400 rounded-full mr-1" />
+                Save failed: {saveError}
+              </div>
+            )}
+          </div>
           
           <Button
             size="sm"

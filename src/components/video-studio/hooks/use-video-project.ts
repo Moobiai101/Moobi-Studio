@@ -25,6 +25,11 @@ export function useVideoProject() {
   const isGenerating = useVideoProjectStore((state) => state.isGenerating);
   const generationProgress = useVideoProjectStore((state) => state.generationProgress);
   
+  // **NEW: Save status tracking**
+  const saveStatus = useVideoProjectStore((state) => state.saveStatus);
+  const lastSavedAt = useVideoProjectStore((state) => state.lastSavedAt);
+  const saveError = useVideoProjectStore((state) => state.saveError);
+  
   // Actions
   const setCurrentTime = useVideoProjectStore((state) => state.setCurrentTime);
   const setIsPlaying = useVideoProjectStore((state) => state.setIsPlaying);
@@ -90,6 +95,11 @@ export function useVideoProject() {
     // AI generation state
     isGenerating,
     generationProgress,
+    
+    // Save status
+    saveStatus,
+    lastSavedAt,
+    saveError,
     
     // Actions
     setCurrentTime,
